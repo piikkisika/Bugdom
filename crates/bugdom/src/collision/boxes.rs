@@ -469,7 +469,10 @@ fn detect(
             if !base.overlaps(now) {
                 continue;
             }
-            let sides = if target.solid.contains(SolidSides::TOUCHABLE) {
+            // Touch-only targets (liquids, the player) are listed with no
+            // sides, whichever way the mover came in.
+            let touchable = target.solid.contains(SolidSides::TOUCHABLE);
+            let sides = if touchable {
                 SolidSides::NONE
             } else {
                 crossed_sides(
@@ -481,7 +484,8 @@ fn detect(
                     motion - target.velocity,
                 )
             };
-            if sides.is_empty() && !target.kinds.has_all(CollisionKind::Impenetrable) {
+            if sides.is_empty() && !touchable && !target.kinds.has_all(CollisionKind::Impenetrable)
+            {
                 continue;
             }
             hits.push(CollisionHit {
@@ -645,6 +649,24 @@ mod tests {
             &mut EntityHashSet::default(),
         );
         (coord, velocity, result)
+    }
+
+    #[test]
+    fn touchable_targets_are_listed_without_sides_or_a_push() {
+        let mut target = rock(CollisionKind::Liquid.into());
+        target.solid = SolidSides::TOUCHABLE;
+        // Already inside it, standing still.
+        let inside = Vec3::new(0.0, 50.0, 0.0);
+        let (coord, _, result) = resolve(inside, inside, Vec3::ZERO, &target);
+        assert_eq!(coord, inside);
+        assert_eq!(
+            result.hits,
+            [CollisionHit {
+                target: 0,
+                target_box: 0,
+                sides: SolidSides::NONE,
+            }]
+        );
     }
 
     #[test]

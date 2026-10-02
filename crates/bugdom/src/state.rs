@@ -13,6 +13,7 @@ use crate::assets::skeleton::SkeletonAsset;
 use crate::assets::terrain::TerrainAsset;
 use crate::fences::FenceKind;
 use crate::level::{CurrentLevel, GLOBAL_MODELS, NUM_LEVELS};
+use crate::liquids::LiquidKind;
 use crate::player::PLAYER_SKELETON;
 
 /// Environment variable that picks the starting level (0 to 9), standing in
@@ -51,6 +52,8 @@ pub struct LevelAssets {
     pub player_skeleton: Handle<SkeletonAsset>,
     /// The textures of the fence types the level type has (`PrimeFences`).
     pub fence_textures: Vec<(FenceKind, Handle<Image>)>,
+    /// The textures of the liquids the level type has (`InitLiquids`).
+    pub liquid_textures: Vec<(LiquidKind, Handle<Image>)>,
 }
 
 fn starting_level() -> usize {
@@ -82,6 +85,13 @@ fn load_level_assets(mut commands: Commands, assets: Res<AssetServer>, level: Re
             .iter()
             .map(|kind| (*kind, assets.load(original_path(&kind.texture_path()))))
             .collect(),
+        liquid_textures: LiquidKind::on_level(def.level_type)
+            .iter()
+            .map(|kind| {
+                let path = kind.texture_path(def.level_type);
+                (*kind, assets.load(original_path(&path)))
+            })
+            .collect(),
     });
 }
 
@@ -97,6 +107,12 @@ fn finish_loading(
         .chain(
             level_assets
                 .fence_textures
+                .iter()
+                .map(|(_, h)| h.id().untyped()),
+        )
+        .chain(
+            level_assets
+                .liquid_textures
                 .iter()
                 .map(|(_, h)| h.id().untyped()),
         );

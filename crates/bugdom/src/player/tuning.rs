@@ -35,6 +35,11 @@ pub struct PlayerTuning {
     /// The player's radius against fences, as a fraction of its radius (it
     /// squeezes a little closer).
     pub fence_radius_scale: f32,
+    /// Top horizontal speed in a liquid (`MAX_PLAYER_SWIM_SPEED`).
+    pub swim_max_speed: f32,
+    /// How long a killed player waits before starting again, in seconds
+    /// (`KILL_DELAY`).
+    pub kill_delay: f32,
     pub bug: BugTuning,
     pub ball: BallTuning,
 }
@@ -81,6 +86,16 @@ pub struct BugTuning {
     /// Counts as on the ground for control while the feet are this close
     /// to the floor.
     pub control_ground_distance: f32,
+    /// How much of the steering reaches a swimming bug (the `slugFactor`
+    /// in `MovePlayerBug_Swim`).
+    pub swim_steering: f32,
+    /// How much of the walking friction a swimming bug feels.
+    pub swim_friction_scale: f32,
+    /// A jump out of a liquid has this fraction of the usual upward speed.
+    pub swim_jump_scale: f32,
+    /// How fast a bug sinks once a liquid has killed it
+    /// (`DrownInLiquid`).
+    pub drown_sink_speed: f32,
 }
 
 /// The ball's constants.
@@ -142,6 +157,8 @@ impl Default for PlayerTuning {
             key_turn_rate: 4.0,
             max_step: 15.0,
             fence_radius_scale: 0.7,
+            swim_max_speed: 250.0,
+            kill_delay: 4.0,
             bug: BugTuning {
                 motion: FormMotion {
                     max_speed: 700.0,
@@ -159,6 +176,10 @@ impl Default for PlayerTuning {
                 jump_to_fall_speed: 900.0,
                 fall_landing_slowdown: 0.5,
                 control_ground_distance: 5.0,
+                swim_steering: 0.6,
+                swim_friction_scale: 1.0 / 6.0,
+                swim_jump_scale: 1.0 / 1.4,
+                drown_sink_speed: 30.0,
             },
             ball: BallTuning {
                 motion: FormMotion {

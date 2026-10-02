@@ -11,6 +11,7 @@ use bevy::prelude::*;
 
 use super::{ModelFile, ModelRef, ModelSpawner, Shading};
 use crate::collision::{CollisionBoxes, CollisionKind};
+use crate::liquids::{Liquid, Underwater};
 use crate::math::yaw_of;
 use crate::player::PlayerSystems;
 use crate::state::AppState;
@@ -83,19 +84,24 @@ pub fn attach_shadow(
 }
 
 /// Puts each shadow under its owner.
-/// Port of `UpdateShadow` (original/src/System/Objects2.c). Shadows of
-/// objects in water are hidden there; that arrives with water.
+/// Port of `UpdateShadow` (original/src/System/Objects2.c).
 fn update_shadows(
     map: Res<TerrainMap>,
     spatial: SpatialQuery,
-    owners: Query<(&Transform, Option<&CollisionBoxes>), Without<Shadow>>,
-    blockers: Query<(&Transform, &CollisionBoxes), Without<Shadow>>,
-    mut shadows: Query<(&Shadow, &ShadowOf, &mut Transform)>,
+    owners: Query<(&Transform, Option<&CollisionBoxes>, Has<Underwater>), Without<Shadow>>,
+    blockers: Query<(&Transform, &CollisionBoxes, Option<&Liquid>), Without<Shadow>>,
+    mut shadows: Query<(&Shadow, &ShadowOf, &mut Transform, &mut Visibility)>,
 ) {
-    for (shadow, owner, mut transform) in &mut shadows {
-        let Ok((owner_transform, boxes)) = owners.get(owner.0) else {
+    for (shadow, owner, mut transform, mut visibility) in &mut shadows {
+        let Ok((owner_transform, boxes, underwater)) = owners.get(owner.0) else {
             continue;
         };
+        // No shadow in a liquid.
+        if underwater {
+            visibility.set_if_neq(Visibility::Hidden);
+            continue;
+        }
+        visibility.set_if_neq(Visibility::Inherited);
         let coord = owner_transform.translation;
         let bottom = boxes.and_then(|b| b.0.first()).map_or(0.0, |b| b.bottom);
         // The original truncates to whole units for this test.
@@ -129,7 +135,7 @@ fn update_shadows(
 /// The top of the first shadow-blocking object under `feet`, if any.
 fn blocker_top(
     spatial: &SpatialQuery,
-    blockers: &Query<(&Transform, &CollisionBoxes), Without<Shadow>>,
+    blockers: &Query<(&Transform, &CollisionBoxes, Option<&Liquid>), Without<Shadow>>,
     feet: Vec3,
 ) -> Option<f32> {
     // Everything below the feet, in a thin column.
@@ -141,14 +147,15 @@ fn blocker_top(
         .shape_intersections(&column, center, Quat::IDENTITY, &filter)
         .into_iter()
         .filter_map(|entity| {
-            let (transform, boxes) = blockers.get(entity).ok()?;
+            let (transform, boxes, liquid) = blockers.get(entity).ok()?;
             let b = boxes.0.first()?.at(transform.translation);
             (feet.y >= b.bottom
                 && feet.x >= b.left
                 && feet.x <= b.right
                 && feet.z <= b.front
                 && feet.z >= b.back)
-                .then_some(b.top)
+                // A liquid's box is its volume, under the surface.
+                .then_some(b.top + liquid.map_or(0.0, |l| l.surface_above_volume()))
         })
         .next()
 }

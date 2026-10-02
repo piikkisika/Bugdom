@@ -15,8 +15,8 @@ use super::animation::AnimatedBugState;
 use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
 use super::{
-    PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle, PlayerTuning,
-    player_collision_mask,
+    Dying, PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle,
+    PlayerTuning, player_collision_mask,
 };
 use crate::collision::{
     BoxMover, BoxTarget, CollisionBoxes, CollisionCandidates, CollisionKind, SolidSides,
@@ -24,6 +24,7 @@ use crate::collision::{
 };
 use crate::fences::Fences;
 use crate::input::{Action, ControlInput, ControlSettings};
+use crate::liquids::{Liquid, LiquidKind, Underwater};
 use crate::math::{yaw_forward, yaw_of};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::terrain::TerrainMap;
@@ -31,11 +32,12 @@ use crate::terrain::TerrainMap;
 /// The world a tick of a player's movement reads: the same for every
 /// player.
 #[derive(SystemParam)]
-pub(super) struct MotionContext<'w> {
+pub(super) struct MotionContext<'w, 's> {
     time: Res<'w, Time>,
     tuning: Res<'w, PlayerTuning>,
     map: Res<'w, TerrainMap>,
     fences: Option<Res<'w, Fences>>,
+    liquids: Query<'w, 's, &'static Liquid>,
 }
 
 /// The player's components that its movement reads and writes, whatever
@@ -62,6 +64,8 @@ pub(super) struct PlayerData {
     pub speed: &'static mut PlayerSpeed,
     pub steering: &'static mut PlayerSteering,
     pub ground: &'static mut GroundContact,
+    pub underwater: Option<&'static Underwater>,
+    pub dying: Has<Dying>,
 }
 
 /// Everything one tick of movement reads and writes, gathered so that the
@@ -83,6 +87,13 @@ pub(super) struct Motion<'a> {
     pub map: &'a TerrainMap,
     pub fences: Option<&'a Fences>,
     pub candidates: &'a [BoxTarget],
+    /// The liquid each candidate is, if it is one.
+    pub candidate_liquids: Vec<Option<LiquidKind>>,
+    /// In a liquid's volume, as of the last collision check
+    /// (`STATUS_BIT_UNDERWATER`).
+    pub underwater: Option<Underwater>,
+    /// Killed, and waiting to start again (`gPlayerGotKilledFlag`).
+    pub killed: bool,
     /// Triggers that went off and stopped being solid this tick.
     pub spent: EntityHashSet,
     pub triggered: Vec<TriggerHit>,
@@ -99,7 +110,11 @@ impl PlayerDataItem<'_, '_> {
     }
 }
 
-impl<'w> MotionContext<'w> {
+impl MotionContext<'_, '_> {
+    pub fn tuning(&self) -> &PlayerTuning {
+        &self.tuning
+    }
+
     /// The motion of one player at the start of its tick.
     pub fn motion<'a>(&'a self, player: &PlayerDataItem<'a, '_>) -> Motion<'a> {
         // Copied out so that the motion doesn't borrow the player.
@@ -122,6 +137,13 @@ impl<'w> MotionContext<'w> {
             map: &self.map,
             fences: self.fences.as_deref(),
             candidates: &candidates.0,
+            candidate_liquids: candidates
+                .0
+                .iter()
+                .map(|t| self.liquids.get(t.entity).ok().map(|l| l.0))
+                .collect(),
+            underwater: player.underwater.copied(),
+            killed: player.dying,
             spent: EntityHashSet::default(),
             triggered: Vec::new(),
             camera_angle: **player.camera_angle,
@@ -133,8 +155,20 @@ impl<'w> MotionContext<'w> {
 impl Motion<'_> {
     /// Writes the tick's result back to the player and sends the triggers
     /// it set off.
-    pub fn store(mut self, player: &mut PlayerDataItem, hits: &mut MessageWriter<TriggerHit>) {
+    pub fn store(
+        mut self,
+        player: &mut PlayerDataItem,
+        commands: &mut Commands,
+        hits: &mut MessageWriter<TriggerHit>,
+    ) {
         hits.write_batch(self.triggered.drain(..));
+        if player.underwater.copied() != self.underwater {
+            let mut entity = commands.entity(player.entity);
+            match self.underwater {
+                Some(underwater) => entity.insert(underwater),
+                None => entity.remove::<Underwater>(),
+            };
+        }
         player.transform.translation = self.coord;
         player.transform.rotation = Quat::from_rotation_y(self.yaw);
         **player.velocity = self.velocity;
@@ -180,16 +214,112 @@ impl Motion<'_> {
     /// keeping the player on the terrain and letting slopes push it.
     ///
     /// Port of `DoPlayerMovementAndCollision`
-    /// (original/src/Player/Player_Control.c). Moving platforms, water and
-    /// viscous traps arrive with those features.
+    /// (original/src/Player/Player_Control.c). In a liquid the player floats
+    /// just under the top of its volume, and the ball turns back into the
+    /// bug to swim. Moving platforms and viscous traps arrive with those
+    /// features.
     pub fn move_and_collide(&mut self, no_control: bool) {
         let tuning = self.tuning;
         let form = tuning.form(self.form);
-        let shape = self.form.collision_box();
+        // From the last check, before this move's.
+        let max_speed = if self.underwater.is_some() {
+            tuning.swim_max_speed
+        } else {
+            form.max_speed
+        };
         self.ground.on_ground = false;
         self.ground.on_terrain = false;
         let old_velocity = self.velocity;
 
+        if !self.killed {
+            self.apply_controls(no_control, max_speed);
+        }
+
+        // Split the move so that fast motion doesn't skip through things.
+        let passes = (self.speed * self.dt / tuning.max_step) as u32 + 1;
+        let dt = self.dt / passes as f32;
+        for _ in 0..passes {
+            let old_coord = self.coord;
+            self.coord += self.velocity * dt;
+            self.collide_with_objects(dt);
+
+            if !self.killed
+                && let Some(underwater) = self.underwater
+            {
+                // The ball can't swim (`InitPlayer_Bug` with
+                // `PLAYER_ANIM_SWIM`).
+                self.form = PlayerForm::Bug;
+                // Splashes arrive with the particle effects.
+                self.coord.y = underwater.volume_top - 1.0;
+                self.velocity.y = -1.0;
+            }
+
+            // The original measured the speed without the vertical motion,
+            // which slowed the bug on gentle slopes at high frame rates; the
+            // modern port adds it back without the gravity this tick added.
+            let real_speed = Vec3::new(
+                self.velocity.x,
+                self.velocity.y + tuning.gravity * dt,
+                self.velocity.z,
+            )
+            .length();
+            let shape = self.form.collision_box();
+            let contact = collide_floor_and_ceiling(
+                self.map,
+                &mut self.coord,
+                old_coord,
+                &mut self.velocity,
+                old_velocity,
+                -shape.bottom,
+                shape.top,
+                real_speed,
+                dt,
+            );
+            if contact.on_ground {
+                self.ground.on_ground = true;
+                self.ground.on_terrain = true;
+            }
+            self.ground.floor_normal = contact.floor_normal;
+
+            if self.ground.on_terrain || self.ground.dist_to_floor < tuning.slope_ground_distance {
+                let form = tuning.form(self.form);
+                let normal = contact.floor_normal;
+                let accel = if normal.y < tuning.steep_slope_normal_y {
+                    // A steep slope throws the player back only if it hits
+                    // it fast.
+                    if self.velocity.y.abs() > tuning.steep_slope_fall_speed {
+                        tuning.slope_accel * form.steep_slope_scale
+                    } else {
+                        0.0
+                    }
+                } else {
+                    tuning.slope_accel * form.gentle_slope_scale
+                };
+                self.add_horizontal(normal.xz() * (accel * dt));
+            }
+        }
+
+        let shape = self.form.collision_box();
+        if let Some(fences) = self.fences {
+            let feet = self.coord.y + shape.bottom;
+            fences.collide(
+                self.map,
+                self.old_coord.xz(),
+                &mut self.coord,
+                &mut self.velocity,
+                PLAYER_RADIUS * tuning.fence_radius_scale,
+                feet,
+            );
+        }
+
+        self.ground.dist_to_floor =
+            self.coord.y + shape.bottom - self.map.floor_height(self.coord.x, self.coord.z);
+    }
+
+    /// The controls' push and the speed limit: part 1 of
+    /// `DoPlayerMovementAndCollision`.
+    fn apply_controls(&mut self, no_control: bool, max_speed: f32) {
+        let tuning = self.tuning;
         if !no_control {
             if self.player_relative_keys() {
                 if self.input.held(Action::Left) {
@@ -221,87 +351,23 @@ impl Motion<'_> {
             self.velocity.x = 0.0;
             self.velocity.z = 0.0;
         }
-        if self.speed > form.max_speed {
+        if self.speed > max_speed {
             // Only the horizontal speed is limited; jumps and falls have
             // their own limits.
-            let scale = form.max_speed / self.speed;
+            let scale = max_speed / self.speed;
             self.velocity.x *= scale;
             self.velocity.z *= scale;
-            self.speed = form.max_speed;
+            self.speed = max_speed;
         }
-
-        // Split the move so that fast motion doesn't skip through things.
-        let passes = (self.speed * self.dt / tuning.max_step) as u32 + 1;
-        let dt = self.dt / passes as f32;
-        for _ in 0..passes {
-            let old_coord = self.coord;
-            self.coord += self.velocity * dt;
-            self.collide_with_objects(dt);
-
-            // The original measured the speed without the vertical motion,
-            // which slowed the bug on gentle slopes at high frame rates; the
-            // modern port adds it back without the gravity this tick added.
-            let real_speed = Vec3::new(
-                self.velocity.x,
-                self.velocity.y + tuning.gravity * dt,
-                self.velocity.z,
-            )
-            .length();
-            let contact = collide_floor_and_ceiling(
-                self.map,
-                &mut self.coord,
-                old_coord,
-                &mut self.velocity,
-                old_velocity,
-                -shape.bottom,
-                shape.top,
-                real_speed,
-                dt,
-            );
-            if contact.on_ground {
-                self.ground.on_ground = true;
-                self.ground.on_terrain = true;
-            }
-            self.ground.floor_normal = contact.floor_normal;
-
-            if self.ground.on_terrain || self.ground.dist_to_floor < tuning.slope_ground_distance {
-                let normal = contact.floor_normal;
-                let accel = if normal.y < tuning.steep_slope_normal_y {
-                    // A steep slope throws the player back only if it hits
-                    // it fast.
-                    if self.velocity.y.abs() > tuning.steep_slope_fall_speed {
-                        tuning.slope_accel * form.steep_slope_scale
-                    } else {
-                        0.0
-                    }
-                } else {
-                    tuning.slope_accel * form.gentle_slope_scale
-                };
-                self.add_horizontal(normal.xz() * (accel * dt));
-            }
-        }
-
-        if let Some(fences) = self.fences {
-            let feet = self.coord.y + shape.bottom;
-            fences.collide(
-                self.map,
-                self.old_coord.xz(),
-                &mut self.coord,
-                &mut self.velocity,
-                PLAYER_RADIUS * tuning.fence_radius_scale,
-                feet,
-            );
-        }
-
-        self.ground.dist_to_floor =
-            self.coord.y + shape.bottom - self.map.floor_height(self.coord.x, self.coord.z);
     }
 
-    /// Bumps into solid objects and sets off triggers.
+    /// Bumps into solid objects, sets off triggers and finds out whether
+    /// the player is in a liquid. A killed player only bumps into solid
+    /// things.
     ///
     /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
-    /// Enemies, hurting objects, platforms, water and viscous objects
-    /// arrive with those features.
+    /// Enemies, hurting objects, platforms and viscous objects arrive with
+    /// those features.
     fn collide_with_objects(&mut self, dt: f32) {
         let mover = BoxMover {
             entity: self.entity,
@@ -314,7 +380,11 @@ impl Motion<'_> {
             &mover,
             &mut self.coord,
             &mut self.velocity,
-            player_collision_mask(),
+            if self.killed {
+                CollisionKind::Misc.into()
+            } else {
+                player_collision_mask()
+            },
             self.candidates,
             dt,
             &mut self.spent,
@@ -323,6 +393,7 @@ impl Motion<'_> {
             self.ground.on_ground = true;
         }
 
+        self.underwater = None;
         for hit in &result.hits {
             let target = &self.candidates[hit.target];
             if self.spent.contains(&target.entity) {
@@ -336,6 +407,21 @@ impl Motion<'_> {
             {
                 self.coord.x = self.old_coord.x;
                 self.coord.z = self.old_coord.z;
+            }
+            // Something solid underfoot wins over the liquid, so that
+            // standing on things in it is reliable. The liquid must also be
+            // above the floor here, not through it.
+            if let Some(Some(liquid)) = self.candidate_liquids.get(hit.target)
+                && !result.sides.contains(SolidSides::BOTTOM)
+                && let Some(volume) = target.boxes.first()
+            {
+                let surface = volume.top + liquid.collision_top_offset();
+                if self.map.floor_height(self.coord.x, self.coord.z) < surface {
+                    self.underwater = Some(Underwater {
+                        volume_top: volume.top,
+                        liquid: *liquid,
+                    });
+                }
             }
         }
         for trigger in result.triggered {
@@ -354,7 +440,10 @@ impl Motion<'_> {
 /// A test bench that runs the player's movement on the real Lawn terrain.
 #[cfg(test)]
 pub(super) mod bench {
+    use avian3d::prelude::LayerMask;
+
     use super::*;
+    use crate::collision::CollisionBox;
 
     pub const DT: f32 = 1.0 / 60.0;
     /// An open, fairly flat spot near the Lawn's start.
@@ -400,10 +489,33 @@ pub(super) mod bench {
                 map: &self.map,
                 fences: None,
                 candidates,
+                candidate_liquids: vec![None; candidates.len()],
+                underwater: None,
+                killed: false,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
                 camera_angle: 0.0,
                 dt: DT,
+            }
+        }
+    }
+
+    impl Bench {
+        /// A wide liquid around [`START`] whose surface is `depth` above
+        /// the floor there.
+        pub fn liquid(&self, kind: LiquidKind, depth: f32) -> BoxTarget {
+            let floor = self.map.floor_height(START.x, START.y);
+            let top = floor + depth - kind.collision_top_offset();
+            let volume = CollisionBox::new(top, top - 2000.0, -2000.0, 2000.0, 2000.0, -2000.0)
+                .at(Vec3::new(START.x, 0.0, START.y));
+            BoxTarget {
+                entity: Entity::from_raw_u32(9).expect("a valid index"),
+                kinds: LayerMask::from([CollisionKind::Liquid, CollisionKind::BlockCamera]),
+                solid: SolidSides::TOUCHABLE,
+                boxes: vec![volume],
+                old_boxes: vec![volume],
+                velocity: Vec3::ZERO,
+                trigger: None,
             }
         }
     }

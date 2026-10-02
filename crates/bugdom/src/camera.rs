@@ -18,7 +18,7 @@ use crate::level::{
     AMBIENT_BRIGHTNESS, CAMERA_FOV, CurrentLevel, FILL_BRIGHTNESS, HITHER_DISTANCE,
 };
 use crate::math::{quick_distance, yaw_from_point_to_point};
-use crate::player::{Player, PlayerSystems, PlayerToCameraAngle};
+use crate::player::{Player, PlayerRespawned, PlayerSystems, PlayerToCameraAngle};
 use crate::state::AppState;
 use crate::terrain::{LayerKind, SUPERTILE_TILES, TILE_SIZE, TerrainMap};
 
@@ -39,9 +39,15 @@ impl Plugin for CameraPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                follow_player
-                    .in_set(CameraSystems::Follow)
-                    .after(PlayerSystems::Move)
+                (
+                    follow_player
+                        .in_set(CameraSystems::Follow)
+                        .after(PlayerSystems::Move),
+                    replace_after_respawn
+                        .in_set(CameraSystems::Follow)
+                        .after(PlayerSystems::Respawn)
+                        .after(follow_player),
+                )
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
@@ -226,6 +232,23 @@ impl FollowCamera {
         }
     }
 
+    /// A camera behind the player, moved into place as `InitCamera` does.
+    fn primed(player: &Transform, map: &TerrainMap, camera_angle: &mut f32) -> Self {
+        let mut camera = Self::behind(player.translation, crate::math::yaw_of(player.rotation));
+        for _ in 0..Self::PRIME_UPDATES {
+            // No items are out yet when the original primes its camera.
+            camera.update(
+                player.translation,
+                0.0,
+                map,
+                |_| None,
+                camera_angle,
+                Self::PRIME_DT,
+            );
+        }
+        camera
+    }
+
     /// Zooms with the zoom keys. Port of `UpdateCamera`.
     fn zoom(&mut self, input: &ControlInput, dt: f32) {
         if input.held(Action::ZoomIn) {
@@ -330,19 +353,7 @@ fn place_follow_camera(
     for (camera_entity, (player_entity, player, mut camera_angle)) in
         cameras.into_iter().zip(players)
     {
-        let mut camera =
-            FollowCamera::behind(player.translation, crate::math::yaw_of(player.rotation));
-        for _ in 0..FollowCamera::PRIME_UPDATES {
-            // No items are out yet when the original primes its camera.
-            camera.update(
-                player.translation,
-                0.0,
-                &map,
-                |_| None,
-                &mut camera_angle,
-                FollowCamera::PRIME_DT,
-            );
-        }
+        let camera = FollowCamera::primed(player, &map, &mut camera_angle);
         commands
             .entity(camera_entity)
             .remove::<FlyCamera>()
@@ -352,6 +363,35 @@ fn place_follow_camera(
                 CameraTarget(player_entity),
                 TransformInterpolation,
             ));
+    }
+}
+
+/// Puts a camera back behind its player when the player starts again
+/// after being killed (`InitCamera` in `DoDeathReset`). The zoom is kept.
+fn replace_after_respawn(
+    map: Res<TerrainMap>,
+    mut respawned: MessageReader<PlayerRespawned>,
+    mut players: Query<(&Transform, &mut PlayerToCameraAngle), Without<GameCamera>>,
+    mut cameras: Query<
+        (&CameraTarget, &mut FollowCamera, &mut Transform),
+        (With<GameCamera>, Without<FlyCamera>),
+    >,
+) {
+    for PlayerRespawned(player_entity) in respawned.read() {
+        let Ok((player, mut camera_angle)) = players.get_mut(*player_entity) else {
+            continue;
+        };
+        for (target, mut camera, mut transform) in &mut cameras {
+            if target.0 != *player_entity {
+                continue;
+            }
+            let distance = camera.distance;
+            *camera = FollowCamera {
+                distance,
+                ..FollowCamera::primed(player, &map, &mut camera_angle)
+            };
+            *transform = camera.transform();
+        }
     }
 }
 

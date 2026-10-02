@@ -37,6 +37,7 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
+            .add_message::<PlayerRespawned>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 spawn_player
@@ -67,6 +68,13 @@ impl Plugin for PlayerPlugin {
                     .after(SkeletonSystems::Advance)
                     .after(CollisionSystems::Gather)
                     .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                FixedUpdate,
+                respawn_dead_players
+                    .in_set(PlayerSystems::Respawn)
+                    .after(PlayerSystems::Move)
+                    .run_if(in_state(AppState::InGame)),
             );
     }
 }
@@ -79,7 +87,21 @@ pub enum PlayerSystems {
     Morph,
     /// Moves the player each fixed tick.
     Move,
+    /// Starts killed players again once their kill delay is over.
+    Respawn,
 }
+
+/// A killed player, waiting to start again (`gPlayerGotKilledFlag`).
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct Dying {
+    /// Seconds until it starts again (`killDelay` in `PlayArea`).
+    pub timer: f32,
+}
+
+/// Sent when a killed player starts again at its [`RespawnPoint`], so that
+/// its camera can jump back behind it.
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerRespawned(pub Entity);
 
 /// The player character. Its translation is the bug's feet, or the ball's
 /// centre; its rotation is only its heading.
@@ -253,6 +275,51 @@ fn spawn_player(
     );
 }
 
+/// Starts each killed player again at its [`RespawnPoint`] once its kill
+/// delay is over.
+///
+/// Port of the kill timer in `PlayArea` and of `DoDeathReset`
+/// (original/src/System/Main.c) and `ResetPlayer`
+/// (original/src/Player/MyGuy.c). Losing a life, the game over, the fade,
+/// health and the invincibility after starting again arrive with the
+/// infobar and the game flow.
+fn respawn_dead_players(
+    time: Res<Time>,
+    map: Res<TerrainMap>,
+    mut commands: Commands,
+    mut respawned: MessageWriter<PlayerRespawned>,
+    mut players: Query<(movement::PlayerData, &RespawnPoint, &mut Dying), With<Player>>,
+) {
+    for (mut player, respawn, mut dying) in &mut players {
+        dying.timer -= time.delta_secs();
+        if dying.timer >= 0.0 {
+            continue;
+        }
+        let point = respawn.position;
+        if *player.form == PlayerForm::Ball {
+            // A new bug, as when unrolling: it keeps the ball's heading and
+            // starts below the checkpoint's height by the ball's offset.
+            player.set_form(PlayerForm::Bug);
+            player.transform.translation = point - Vec3::Y * PLAYER_BALL_FOOT_OFFSET;
+            *player.spin = BallSpin::default();
+        } else {
+            player.transform.translation =
+                Vec3::new(point.x, map.floor_height(point.x, point.z), point.z);
+            player.transform.rotation = Quat::from_rotation_y(respawn.yaw);
+        }
+        *player.state = BugState::Stand;
+        player.animated.restart();
+        **player.velocity = Vec3::ZERO;
+        **player.previous = player.transform.translation;
+        // The original leaves the liquid flag for the next collision check
+        // to clear; clearing it now only differs for that one tick.
+        commands
+            .entity(player.entity)
+            .remove::<(Dying, crate::liquids::Underwater)>();
+        respawned.write(PlayerRespawned(player.entity));
+    }
+}
+
 /// Places the player's model: the bug stands on the player's origin; the
 /// ball's frozen roll-up pose sits below its centre and rolls about it.
 ///
@@ -279,5 +346,61 @@ fn pose_player_model(
             rotation,
             scale: Vec3::splat(PLAYER_BUG_SCALE),
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    #[test]
+    fn only_players_whose_kill_delay_is_over_start_again_at_their_checkpoint() {
+        let mut world = World::new();
+        let map = TerrainMap::load_for_tests("Lawn", false);
+        let floor = map.floor_height(12000.0, 15000.0);
+        world.insert_resource(map);
+        world.init_resource::<Time>();
+        world.init_resource::<Messages<PlayerRespawned>>();
+        let checkpoint = RespawnPoint {
+            checkpoint: Some(1),
+            position: Vec3::new(12000.0, floor + 300.0, 15000.0),
+            yaw: 1.0,
+        };
+        let mut spawn = |timer: f32| {
+            world
+                .spawn((
+                    Player,
+                    Transform::from_xyz(13000.0, 0.0, 16000.0),
+                    solid_object(
+                        vec![PlayerForm::Bug.collision_box()],
+                        CollisionKind::Player,
+                        SolidSides::TOUCHABLE,
+                    ),
+                    checkpoint,
+                    Dying { timer },
+                    BugState::Swim,
+                ))
+                .id()
+        };
+        let done = spawn(-0.1);
+        let waiting = spawn(2.0);
+
+        world
+            .run_system_once(respawn_dead_players)
+            .expect("the system runs");
+
+        let at = |world: &World, entity| world.get::<Transform>(entity).map(|t| t.translation);
+        assert_eq!(at(&world, done), Some(Vec3::new(12000.0, floor, 15000.0)));
+        assert!(!world.entity(done).contains::<Dying>());
+        assert_eq!(world.get::<BugState>(done), Some(&BugState::Stand));
+        assert_eq!(at(&world, waiting), Some(Vec3::new(13000.0, 0.0, 16000.0)));
+        assert!(world.entity(waiting).contains::<Dying>());
+        let sent: Vec<_> = world
+            .resource_mut::<Messages<PlayerRespawned>>()
+            .drain()
+            .collect();
+        assert_eq!(sent, [PlayerRespawned(done)]);
     }
 }

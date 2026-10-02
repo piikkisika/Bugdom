@@ -11,9 +11,10 @@ use bevy::prelude::*;
 use super::animation::AnimatedBugState;
 use super::ball::become_ball;
 use super::movement::{Motion, MotionContext, PlayerData};
-use super::{Player, PlayerForm, PlayerModel};
+use super::{Dying, Player, PlayerForm, PlayerModel};
 use crate::collision::TriggerHit;
 use crate::input::Action;
+use crate::liquids::LiquidKind;
 use crate::math::turn_toward;
 use crate::skeleton::SkeletonAnimator;
 
@@ -33,6 +34,8 @@ pub enum BugState {
     Jump,
     Fall,
     Land,
+    /// Swimming in a liquid, or drowning in one that kills.
+    Swim,
 }
 
 /// One tick of the bug's movement.
@@ -42,12 +45,15 @@ struct Bug<'a> {
     animator: &'a SkeletonAnimator,
     /// The roll-up has finished: the bug becomes the ball.
     rolled_up: bool,
+    /// A liquid has killed the bug.
+    drowned: bool,
 }
 
 /// Moves the player's bug for one tick.
 ///
 /// Port of `MovePlayer_Bug` (original/src/Player/Player_Bug.c).
 pub fn move_bug(
+    mut commands: Commands,
     context: MotionContext,
     mut trigger_hits: MessageWriter<TriggerHit>,
     mut players: Query<(PlayerData, &PlayerModel), With<Player>>,
@@ -65,14 +71,21 @@ pub fn move_bug(
             state: *player.state,
             animator,
             rolled_up: false,
+            drowned: false,
         };
         bug.tick();
 
-        let (state, rolled_up) = (bug.state, bug.rolled_up);
-        bug.motion.store(&mut player, &mut trigger_hits);
+        let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
+        bug.motion
+            .store(&mut player, &mut commands, &mut trigger_hits);
         player.state.set_if_neq(state);
         if rolled_up {
             become_ball(&mut player);
+        }
+        if drowned && !player.dying {
+            commands.entity(player.entity).insert(Dying {
+                timer: context.tuning().kill_delay,
+            });
         }
     }
 }
@@ -87,6 +100,7 @@ impl Bug<'_> {
             BugState::Jump => self.jump(),
             BugState::Fall => self.fall(),
             BugState::Land => self.land(),
+            BugState::Swim => self.swim(),
         }
         if !self.rolled_up {
             self.update();
@@ -98,7 +112,7 @@ impl Bug<'_> {
     fn stand(&mut self) {
         let tuning = &self.motion.tuning.bug;
         self.motion.apply_friction_and_gravity(tuning.friction);
-        self.motion.move_and_collide(false);
+        self.move_and_collide(false);
         if self.state == BugState::Stand && self.motion.speed > tuning.walk_speed {
             self.state = BugState::Walk;
         }
@@ -110,7 +124,7 @@ impl Bug<'_> {
         let tuning = &self.motion.tuning.bug;
         self.control(1.0);
         self.motion.apply_friction_and_gravity(tuning.friction);
-        self.motion.move_and_collide(false);
+        self.move_and_collide(false);
         if self.state == BugState::Walk && self.motion.speed < tuning.walk_speed {
             self.state = BugState::Stand;
         }
@@ -126,7 +140,7 @@ impl Bug<'_> {
         let tuning = &self.motion.tuning.bug;
         self.motion
             .apply_friction_and_gravity(tuning.super_friction);
-        self.motion.move_and_collide(true);
+        self.move_and_collide(true);
     }
 
     /// Port of `MovePlayerBug_UnRoll`.
@@ -137,7 +151,7 @@ impl Bug<'_> {
         let tuning = &self.motion.tuning.bug;
         self.motion
             .apply_friction_and_gravity(tuning.super_friction);
-        self.motion.move_and_collide(true);
+        self.move_and_collide(true);
     }
 
     /// Port of `MovePlayerBug_Jump`. Aiming at boppable enemies arrives with
@@ -145,7 +159,7 @@ impl Bug<'_> {
     fn jump(&mut self) {
         let tuning = &self.motion.tuning.bug;
         self.motion.apply_friction_and_gravity(tuning.friction);
-        self.motion.move_and_collide(false);
+        self.move_and_collide(false);
         if self.motion.ground.on_ground {
             self.motion.velocity.y = 0.0;
             if self.state == BugState::Jump {
@@ -162,7 +176,7 @@ impl Bug<'_> {
     fn fall(&mut self) {
         let tuning = &self.motion.tuning.bug;
         self.motion.apply_friction_and_gravity(tuning.friction);
-        self.motion.move_and_collide(false);
+        self.move_and_collide(false);
         if self.state == BugState::Fall && self.motion.ground.on_ground {
             self.state = BugState::Land;
             // Landing from a fall slows the bug down.
@@ -177,9 +191,47 @@ impl Bug<'_> {
     fn land(&mut self) {
         let tuning = &self.motion.tuning.bug;
         self.motion.apply_friction_and_gravity(tuning.friction);
-        self.motion.move_and_collide(true);
+        self.move_and_collide(true);
         if !self.animator.is_morphing() {
             self.state = BugState::Stand;
+        }
+    }
+
+    /// Port of `MovePlayerBug_Swim`: slow and floaty in water. Any other
+    /// liquid kills. Ripples arrive with the effects, and lava's burning
+    /// with the particles.
+    fn swim(&mut self) {
+        let liquid = self
+            .motion
+            .underwater
+            .map_or(LiquidKind::Water, |u| u.liquid);
+        if liquid != LiquidKind::Water {
+            self.drown();
+            return;
+        }
+        let tuning = &self.motion.tuning.bug;
+        self.control(tuning.swim_steering);
+        self.motion
+            .apply_friction_and_gravity(tuning.friction * tuning.swim_friction_scale);
+        self.move_and_collide(false);
+        if self.motion.underwater.is_none() && self.state == BugState::Swim {
+            self.state = BugState::Stand;
+        }
+    }
+
+    /// Sinks slowly; the bug starts again once the kill delay is over.
+    /// Port of `DrownInLiquid`.
+    fn drown(&mut self) {
+        self.drowned = true;
+        self.motion.coord.y -= self.motion.tuning.bug.drown_sink_speed * self.motion.dt;
+    }
+
+    /// Moves, and starts swimming on landing in a liquid (the
+    /// `PLAYER_ANIM_SWIM` morph in `DoPlayerMovementAndCollision`).
+    fn move_and_collide(&mut self, no_control: bool) {
+        self.motion.move_and_collide(no_control);
+        if self.motion.underwater.is_some() && !self.motion.killed {
+            self.state = BugState::Swim;
         }
     }
 
@@ -215,12 +267,19 @@ impl Bug<'_> {
         };
 
         // The original allows a jump from standing or walking even in the
-        // air, e.g. right after walking off a ledge.
-        if matches!(self.state, BugState::Stand | BugState::Walk)
-            && m.input.just_pressed(Action::Jump)
+        // air, e.g. right after walking off a ledge. Jumping out of water
+        // is weaker.
+        if matches!(
+            self.state,
+            BugState::Stand | BugState::Walk | BugState::Swim
+        ) && m.input.just_pressed(Action::Jump)
         {
+            m.velocity.y = if self.state == BugState::Swim {
+                tuning.jump_speed * tuning.swim_jump_scale
+            } else {
+                tuning.jump_speed
+            };
             self.state = BugState::Jump;
-            m.velocity.y = tuning.jump_speed;
         }
     }
 }
@@ -259,6 +318,7 @@ mod tests {
             state,
             animator,
             rolled_up: false,
+            drowned: false,
         };
         for tick in 0..ticks {
             if tick > 0 {
@@ -380,5 +440,94 @@ mod tests {
         simulate_with(&animator, BugState::UnRoll, &[], 1, &[], &[], |bug| {
             assert_eq!(bug.state, BugState::Stand);
         });
+    }
+
+    /// Runs the bug from standing at the Lawn's start in a liquid whose
+    /// surface is `depth` above the floor, with a fresh input each tick.
+    fn simulate_in_liquid(
+        kind: LiquidKind,
+        depth: f32,
+        inputs: &[ControlInput],
+        mut each: impl FnMut(&Bug),
+    ) {
+        let bench = Bench::lawn();
+        let liquid = [bench.liquid(kind, depth)];
+        let animator = SkeletonAnimator::default();
+        let idle = ControlInput::default();
+        let mut motion = bench.motion(PlayerForm::Bug, &idle, &liquid);
+        motion.candidate_liquids = vec![Some(kind)];
+        let mut bug = Bug {
+            motion,
+            state: BugState::Stand,
+            animator: &animator,
+            rolled_up: false,
+            drowned: false,
+        };
+        for input in inputs {
+            bug.motion = bug.motion.next_tick(input);
+            bug.tick();
+            each(&bug);
+        }
+    }
+
+    #[test]
+    fn deep_water_makes_the_bug_swim_just_under_the_volume_top() {
+        let forward = ControlInput::for_tests(&[Action::Forward], &[]);
+        let mut ticks = 0;
+        simulate_in_liquid(LiquidKind::Water, 300.0, &vec![forward; 120], |bug| {
+            ticks += 1;
+            assert_eq!(bug.state, BugState::Swim);
+            let underwater = bug.motion.underwater.expect("in the water");
+            assert!((bug.motion.coord.y - (underwater.volume_top - 1.0)).abs() < 1.0);
+            // The swimming limit applies from the tick after it got in.
+            if ticks > 1 {
+                assert!(bug.motion.speed <= 250.0 + 1e-3, "{}", bug.motion.speed);
+            }
+        });
+    }
+
+    #[test]
+    fn shallow_water_is_walked_through() {
+        let forward = ControlInput::for_tests(&[Action::Forward], &[]);
+        simulate_in_liquid(LiquidKind::Water, 50.0, &vec![forward; 30], |bug| {
+            assert!(bug.motion.underwater.is_none());
+            assert_ne!(bug.state, BugState::Swim);
+        });
+    }
+
+    #[test]
+    fn a_jump_out_of_water_is_weaker() {
+        let idle = ControlInput::default();
+        let jump = ControlInput::for_tests(&[], &[Action::Jump]);
+        let mut states = Vec::new();
+        let mut rise = 0.0;
+        simulate_in_liquid(LiquidKind::Water, 300.0, &[idle, jump], |bug| {
+            states.push(bug.state);
+            rise = bug.motion.velocity.y;
+        });
+        assert_eq!(states, [BugState::Swim, BugState::Jump]);
+        // The jump comes before the tick's gravity.
+        assert!(
+            (rise - (2000.0 / 1.4 - 5200.0 / 60.0)).abs() < 1e-2,
+            "{rise}"
+        );
+    }
+
+    #[test]
+    fn honey_drowns_the_bug() {
+        let idle = ControlInput::default();
+        let mut heights = Vec::new();
+        let mut drowned = Vec::new();
+        simulate_in_liquid(
+            LiquidKind::Honey,
+            300.0,
+            &[idle.clone(), idle.clone(), idle],
+            |bug| {
+                heights.push(bug.motion.coord.y);
+                drowned.push(bug.drowned);
+            },
+        );
+        assert_eq!(drowned, [false, true, true]);
+        assert!((heights[1] - heights[2] - 30.0 / 60.0).abs() < 1e-3);
     }
 }

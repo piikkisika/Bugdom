@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 
 use super::bug::BugState;
-use super::{PlayerModel, PlayerSpeed};
+use super::{Dying, PlayerModel, PlayerSpeed};
 use crate::skeleton::SkeletonAnimator;
 
 /// The bug skeleton's animations (`PLAYER_ANIM_*` in
@@ -21,10 +21,15 @@ mod anim {
     pub const JUMP: usize = 5;
     pub const FALL: usize = 6;
     pub const LAND: usize = 7;
+    pub const SWIM: usize = 8;
 }
 
 /// Walk animation speed per unit of walking speed (`MovePlayerBug_Walk`).
 const WALK_ANIM_SPEED_PER_SPEED: f32 = 0.006;
+/// Swim animation speed while swimming and while drowning
+/// (`MovePlayerBug_Swim`, `DrownInLiquid`).
+const SWIM_ANIM_SPEED: f32 = 1.5;
+const DROWN_ANIM_SPEED: f32 = 0.7;
 
 /// The state the animation was last started for, or `None` when the
 /// current state's animation must start again from the beginning. A new
@@ -55,6 +60,7 @@ fn animation_for(state: BugState) -> usize {
         BugState::Jump => anim::JUMP,
         BugState::Fall => anim::FALL,
         BugState::Land => anim::LAND,
+        BugState::Swim => anim::SWIM,
     }
 }
 
@@ -66,6 +72,8 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
         (_, BugState::RollUp | BugState::UnRoll) => None,
         (Some(BugState::UnRoll), BugState::Stand) => None,
         (None, _) => None,
+        (_, BugState::Swim) => Some(5.0),
+        (Some(BugState::Swim), BugState::Stand) => Some(5.0),
         (Some(BugState::Jump), BugState::Land) => Some(7.0),
         (_, BugState::Land) => Some(9.0),
         (_, BugState::Jump) => Some(9.0),
@@ -78,10 +86,16 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
 /// Starts the animation of a new state, and paces the walk animation to
 /// the walking speed.
 pub fn animate_bug(
-    mut bugs: Query<(&BugState, &mut AnimatedBugState, &PlayerSpeed, &PlayerModel)>,
+    mut bugs: Query<(
+        &BugState,
+        &mut AnimatedBugState,
+        &PlayerSpeed,
+        &PlayerModel,
+        Has<Dying>,
+    )>,
     mut animators: Query<&mut SkeletonAnimator>,
 ) {
-    for (&state, mut animated, speed, model) in &mut bugs {
+    for (&state, mut animated, speed, model, dying) in &mut bugs {
         let Ok(mut animator) = animators.get_mut(model.0) else {
             continue;
         };
@@ -94,6 +108,12 @@ pub fn animate_bug(
             animated.0 = Some(state);
         } else if state == BugState::Walk {
             animator.speed = **speed * WALK_ANIM_SPEED_PER_SPEED;
+        } else if state == BugState::Swim {
+            animator.speed = if dying {
+                DROWN_ANIM_SPEED
+            } else {
+                SWIM_ANIM_SPEED
+            };
         }
     }
 }

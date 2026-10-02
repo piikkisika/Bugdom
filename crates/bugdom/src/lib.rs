@@ -9,6 +9,7 @@ pub mod fences;
 pub mod input;
 pub mod items;
 pub mod level;
+pub mod liquids;
 pub mod math;
 pub mod objects;
 pub mod physics;
@@ -40,6 +41,7 @@ impl Plugin for GamePlugin {
             objects::ObjectsPlugin,
             items::ItemsPlugin,
             fences::FencePlugin,
+            liquids::LiquidsPlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,
             dev::CapturePlugin,

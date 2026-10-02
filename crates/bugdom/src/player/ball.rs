@@ -81,6 +81,18 @@ pub(super) fn become_bug(player: &mut PlayerDataItem) {
     *player.spin = BallSpin::default();
 }
 
+/// Turns the ball that fell into a liquid into the bug, swimming where the
+/// ball's move left it.
+///
+/// Port of `InitPlayer_Bug` (original/src/Player/Player_Bug.c) as called
+/// by `DoPlayerMovementAndCollision` with `PLAYER_ANIM_SWIM`.
+fn become_swimming_bug(player: &mut PlayerDataItem) {
+    player.set_form(PlayerForm::Bug);
+    *player.state = BugState::Swim;
+    player.animated.restart();
+    *player.spin = BallSpin::default();
+}
+
 /// Whether the bug's head would fit under the ceiling if the ball unrolled
 /// at `coord`. The ball is shorter than the bug, so it can reach places with
 /// lower ceilings.
@@ -145,6 +157,7 @@ struct Ball<'a> {
 /// Port of `MovePlayer_Ball` (original/src/Player/Player_Ball.c). The nitro
 /// trail's particles arrive with the particle effects.
 pub fn move_ball(
+    mut commands: Commands,
     context: MotionContext,
     mut trigger_hits: MessageWriter<TriggerHit>,
     mut players: Query<PlayerData, With<Player>>,
@@ -163,11 +176,15 @@ pub fn move_ball(
         ball.tick();
 
         let (spin, nitro, unrolled) = (ball.spin, ball.nitro, ball.unrolled);
+        let swimming = ball.motion.form == PlayerForm::Bug;
         player.ball_time.set_if_neq(BallTime(ball.ball_time));
-        ball.motion.store(&mut player, &mut trigger_hits);
+        ball.motion
+            .store(&mut player, &mut commands, &mut trigger_hits);
         player.spin.set_if_neq(spin);
         player.nitro.set_if_neq(Nitro(nitro));
-        if unrolled {
+        if swimming {
+            become_swimming_bug(&mut player);
+        } else if unrolled {
             become_bug(&mut player);
         }
     }
@@ -186,9 +203,12 @@ impl Ball<'_> {
     }
 
     /// Port of `UpdatePlayer_Ball`. Being knocked over arrives with the
-    /// enemies.
+    /// enemies. A ball that has just turned into the swimming bug still
+    /// loses ball time this tick, as in the original.
     fn update(&mut self) {
-        self.spin_ball();
+        if self.motion.form == PlayerForm::Ball {
+            self.spin_ball();
+        }
         // `ProcessBallTimer`
         let drain = self.motion.tuning.ball.ball_time_drain * self.motion.dt;
         self.lose_ball_time(drain);
@@ -257,7 +277,9 @@ impl Ball<'_> {
         self.ball_time -= amount;
         if self.ball_time <= 0.0 {
             self.ball_time = 0.0;
-            if has_headroom_to_unroll(self.motion.map, self.motion.tuning, self.motion.coord) {
+            if self.motion.form == PlayerForm::Ball
+                && has_headroom_to_unroll(self.motion.map, self.motion.tuning, self.motion.coord)
+            {
                 self.unrolled = true;
             }
         }
@@ -441,5 +463,26 @@ mod tests {
         assert_eq!(state(presses), BugState::RollUp);
         assert_eq!(state(idle), BugState::Stand);
         assert_eq!(state(out_of_time), BugState::Stand);
+    }
+
+    #[test]
+    fn the_ball_turns_into_the_bug_in_deep_water() {
+        let bench = Bench::lawn();
+        let water = [bench.liquid(crate::liquids::LiquidKind::Water, 300.0)];
+        let input = ControlInput::default();
+        let mut motion = bench.motion(PlayerForm::Ball, &input, &water);
+        motion.candidate_liquids = vec![Some(crate::liquids::LiquidKind::Water)];
+        let mut ball = Ball {
+            motion,
+            spin: BallSpin::default(),
+            nitro: 0.0,
+            ball_time: 1.0,
+            unrolled: false,
+        };
+        ball.tick();
+        assert_eq!(ball.motion.form, PlayerForm::Bug);
+        assert!(!ball.unrolled);
+        // Ball time still drains on the tick it changes.
+        assert!(ball.ball_time < 1.0);
     }
 }
