@@ -1,6 +1,7 @@
 //! Bugdom, ported to Bevy.
 
 use bevy::prelude::*;
+use bugdom::GamePlugin;
 use bugdom::assets::{OriginalAssetsPlugin, OriginalDataSourcePlugin};
 
 fn main() -> AppExit {
@@ -13,11 +14,6 @@ fn main() -> AppExit {
             }),
             ..default()
         }))
-        .add_plugins(OriginalAssetsPlugin)
-        .add_systems(Startup, spawn_camera)
+        .add_plugins((OriginalAssetsPlugin, GamePlugin))
         .run()
-}
-
-fn spawn_camera(mut commands: Commands) {
-    commands.spawn(Camera3d::default());
 }

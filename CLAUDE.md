@@ -26,6 +26,10 @@ animation at that tick first. Run it under
 `xvfb-run -a -s "-screen 0 1280x720x24"` with
 `VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`. Use `cargo run`, not
 the binary directly: development builds link Bevy dynamically.
+The game itself (`cargo run -p bugdom`) takes `BUGDOM_CAPTURE=/path/shot.png`
+the same way, plus `BUGDOM_LEVEL=<0-9>` to pick the level and
+`BUGDOM_CAMERA=x,y,z,yaw,pitch` to place the debug camera (world units and
+radians).
 
 ## Bevy
 - The Bevy version is pinned in the workspace `Cargo.toml` (0.19). Your

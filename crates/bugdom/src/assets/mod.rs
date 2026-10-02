@@ -18,6 +18,12 @@ use bevy::prelude::*;
 /// Name of the asset source that serves the original game data.
 pub const ORIGINAL_SOURCE: &str = "original";
 
+/// The asset path of a file in the original data directory, e.g.
+/// `original_path("Terrain/Lawn.ter.rsrc")`.
+pub fn original_path(path: &str) -> String {
+    format!("{ORIGINAL_SOURCE}://{path}")
+}
+
 /// Registers the `original://` asset source. Asset sources must exist before
 /// Bevy's `AssetPlugin` is built, so add this before `DefaultPlugins`.
 pub struct OriginalDataSourcePlugin;
