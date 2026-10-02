@@ -18,6 +18,15 @@ Run all of these and make sure they pass: `cargo fmt --all`,
 all of Bevy, which is slow the first time in a session; `bugdom_formats`
 tests do not need Bevy.
 
+## Checking rendering
+Cloud sessions can render headlessly. `cargo run -p bugdom --bin viewer` with
+`BUGDOM_VIEWER_CAPTURE=skeleton:Ant:0:/path/shot.png` (or `model:<file>:<object>:...`)
+saves a screenshot and exits; `BUGDOM_VIEWER_CAPTURE_TICK=<tick>` freezes the
+animation at that tick first. Run it under
+`xvfb-run -a -s "-screen 0 1280x720x24"` with
+`VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/lvp_icd.json`. Use `cargo run`, not
+the binary directly: development builds link Bevy dynamically.
+
 ## Bevy
 - The Bevy version is pinned in the workspace `Cargo.toml` (0.19). Your
   training data likely covers older Bevy APIs, so check the locked version

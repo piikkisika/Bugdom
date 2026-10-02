@@ -14,8 +14,11 @@ cd "$CLAUDE_PROJECT_DIR"
 git submodule update --init --recursive
 
 # Bevy's Linux build dependencies: ALSA (audio), udev (gamepads),
-# Wayland and xkbcommon (windowing).
-packages=(libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev)
+# Wayland and xkbcommon (windowing). The rest let agents run the game and
+# viewer headlessly for screenshots: a virtual X display, X11 keyboard support
+# and Mesa's software Vulkan driver.
+packages=(libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
+  xvfb libxkbcommon-x11-0 mesa-vulkan-drivers)
 missing=()
 for package in "${packages[@]}"; do
   dpkg -s "$package" >/dev/null 2>&1 || missing+=("$package")

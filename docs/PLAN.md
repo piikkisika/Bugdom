@@ -119,7 +119,7 @@ The original game is not built as part of this project.
 - [x] Skeleton (`.skeleton.rsrc` + `.3dmf`) → bones, joints, animations
 - [x] Terrain (`.ter.rsrc`) → heightmap, tile map, item list, splines, fences
 - [x] Sound banks (`.sounds`), AIFF music, TGA images
-- [ ] Bevy asset loaders
+- [x] Bevy asset loaders
 - [ ] (If needed) headless data-dump tool built from the original loaders, for comparing parser output
 - **Milestone:** model and skeleton viewer (equivalent of `ModelDebug.c`)
 

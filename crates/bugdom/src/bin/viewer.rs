@@ -2,19 +2,21 @@
 //! screen (original/src/Screens/ModelDebug.c). Used to check the parsers and
 //! loaders against the original game.
 //!
-//! Controls:
-//! - F: switch between skeletons and model files
+//! Controls (the same keys as the original's screen where it has them):
+//! - Space: switch between skeletons and model files
 //! - Tab / Shift+Tab: next / previous skeleton or model file
 //! - Enter / Shift+Enter: next / previous animation or object
 //! - Left/right arrows: orbit; up/down arrows: tilt; mouse wheel: zoom
-//! - Space: pause
+//! - P: pause
 //!
 //! For automated checks, `BUGDOM_VIEWER_CAPTURE=<kind>:<name>:<item>:<png>`
 //! (kind is `skeleton` or `model`) shows that selection, saves a screenshot
-//! after a moment and exits.
+//! after a moment and exits. With `BUGDOM_VIEWER_CAPTURE_TICK=<tick>`, a
+//! skeleton's animation is frozen at that tick for the screenshot.
 
 use std::path::Path;
 
+use bevy::camera::primitives::MeshAabb;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use bugdom::assets::model::Model;
@@ -166,7 +168,7 @@ fn handle_keys(
         Mode::Models => catalogue.models.len(),
     };
 
-    if keys.just_pressed(KeyCode::KeyF) {
+    if keys.just_pressed(KeyCode::Space) {
         selection.mode = match selection.mode {
             Mode::Skeletons => Mode::Models,
             Mode::Models => Mode::Skeletons,
@@ -186,7 +188,7 @@ fn handle_keys(
             selection.item + 1
         };
     }
-    if keys.just_pressed(KeyCode::Space) {
+    if keys.just_pressed(KeyCode::KeyP) {
         selection.paused = !selection.paused;
         if selection.paused {
             time.pause();
@@ -247,7 +249,9 @@ fn respawn_subject(
             let handle: Handle<SkeletonAsset> = assets.load(format!(
                 "{ORIGINAL_SOURCE}://Skeletons/{name}.skeleton.rsrc"
             ));
-            commands.spawn((Subject, Skeleton(handle)));
+            let mut animator = SkeletonAnimator::default();
+            animator.set_anim(selection.item);
+            commands.spawn((Subject, Skeleton(handle), animator));
             *shown = Some(current);
         }
         Mode::Models => {
@@ -286,7 +290,9 @@ fn frame_subject(
     catalogue: Res<Catalogue>,
     assets: Res<AssetServer>,
     models: Res<Assets<Model>>,
-    rigs: Query<&SkeletonRig, With<Subject>>,
+    skeletons: Res<Assets<SkeletonAsset>>,
+    meshes: Res<Assets<Mesh>>,
+    subjects: Query<&Skeleton, (With<Subject>, With<SkeletonRig>)>,
     mut orbits: Query<&mut Orbit>,
 ) {
     let Ok(mut orbit) = orbits.single_mut() else {
@@ -297,20 +303,27 @@ fn frame_subject(
     }
     let (center, radius) = match selection.mode {
         Mode::Skeletons => {
-            let Ok(rig) = rigs.single() else { return };
-            let coords: Vec<Vec3> = rig
-                .definition
-                .bones
-                .iter()
-                .map(|b| Vec3::from(b.coord))
-                .collect();
-            let center = coords.iter().sum::<Vec3>() / coords.len().max(1) as f32;
-            let radius = coords
-                .iter()
-                .map(|c| c.distance(center))
-                .fold(0.0, f32::max);
-            // Bones sit inside the body, so pad the radius.
-            (center, radius * 1.5 + 10.0)
+            // Frame the bind-pose meshes; bone positions alone can be far
+            // too tight (Buddy has three bones close together).
+            let Ok(skeleton) = subjects.single() else {
+                return;
+            };
+            let Some(asset) = skeletons.get(&skeleton.0) else {
+                return;
+            };
+            let mut min = Vec3::splat(f32::MAX);
+            let mut max = Vec3::splat(f32::MIN);
+            for part in &asset.parts {
+                let Some(aabb) = meshes.get(&part.mesh).and_then(|m| m.compute_aabb()) else {
+                    return;
+                };
+                min = min.min(Vec3::from(aabb.min()));
+                max = max.max(Vec3::from(aabb.max()));
+            }
+            if min.x > max.x {
+                return;
+            }
+            ((min + max) / 2.0, (max - min).length() / 2.0)
         }
         Mode::Models => {
             let Some(name) = catalogue.models.get(selection.file) else {
@@ -447,7 +460,7 @@ fn update_label(
         lines.push("Paused".into());
     }
     lines.push(String::new());
-    lines.push("F mode | Tab file | Enter item | arrows/wheel camera | Space pause".into());
+    lines.push("Space mode | Tab file | Enter item | arrows/wheel camera | P pause".into());
     text.0 = lines.join("\n");
 }
 
@@ -460,8 +473,10 @@ mod capture {
     #[derive(Resource)]
     pub struct Capture {
         path: String,
-        /// Seconds to wait after the camera is framed, so the animation runs.
+        /// Real seconds to wait after the camera is framed (and the animation
+        /// frozen, if requested), so rendering has settled.
         delay: f32,
+        freeze_at_tick: Option<f32>,
         state: State,
     }
 
@@ -500,6 +515,9 @@ mod capture {
         commands.insert_resource(Capture {
             path: path.to_owned(),
             delay: 1.0,
+            freeze_at_tick: std::env::var("BUGDOM_VIEWER_CAPTURE_TICK")
+                .ok()
+                .and_then(|t| t.parse().ok()),
             state: State::Waiting,
         });
     }
@@ -509,11 +527,23 @@ mod capture {
         time: Res<Time<Real>>,
         capture: Option<ResMut<Capture>>,
         orbits: Query<&Orbit>,
+        animators: Query<&SkeletonAnimator>,
+        mut virtual_time: ResMut<Time<Virtual>>,
         mut exit: MessageWriter<AppExit>,
     ) {
         let Some(mut capture) = capture else { return };
         if !orbits.iter().any(|o| o.framed) {
             return;
+        }
+        if let Some(tick) = capture.freeze_at_tick {
+            // The fixed timestep makes the frozen tick land within one step.
+            if !virtual_time.is_paused() {
+                if animators.iter().any(|a| a.time >= tick) {
+                    virtual_time.pause();
+                } else {
+                    return;
+                }
+            }
         }
         match &mut capture.state {
             State::Waiting => {
