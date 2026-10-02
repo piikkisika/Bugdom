@@ -5,9 +5,10 @@
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use super::glow::{GlowMaterial, draw_order};
 use crate::assets::model::Model;
 use crate::level::CurrentLevel;
-use crate::objects::{ModelFile, ModelRef, ObjectLighting, ObjectMaterial, ObjectShading, Shading};
+use crate::objects::{ModelFile, ModelRef, ObjectLighting, Shading};
 use crate::state::{AppState, LevelAssets};
 
 /// The ripple model (`GLOBAL1_MObjType_Ripple`).
@@ -26,7 +27,7 @@ pub struct Ripple {
     /// Its opacity, which runs down to 0 (`Health`).
     pub opacity: f32,
     /// Each part's material and the alpha the model gives it.
-    materials: Vec<(Handle<ObjectMaterial>, f32)>,
+    materials: Vec<(Handle<GlowMaterial>, f32)>,
 }
 
 /// What [`make_ripple`] needs.
@@ -36,7 +37,7 @@ pub struct RippleMaker<'w> {
     level_assets: Res<'w, LevelAssets>,
     models: Res<'w, Assets<Model>>,
     standard: Res<'w, Assets<StandardMaterial>>,
-    materials: ResMut<'w, Assets<ObjectMaterial>>,
+    materials: ResMut<'w, Assets<GlowMaterial>>,
 }
 
 /// Spawns a ripple at `position` (the liquid's surface) with the given
@@ -44,9 +45,12 @@ pub struct RippleMaker<'w> {
 ///
 /// Port of `MakeRipple`. `ModelSpawner` shares materials between objects
 /// of the same opacity, which won't do for a fading object, so this builds
-/// the model itself with materials of its own. The original draws ripples
-/// after the water (`kDrawOrder_Ripples`); here Bevy's transparent sort
-/// decides.
+/// the model itself with materials of its own, drawn after the water
+/// ([`draw_order::RIPPLES`]).
+///
+/// The original lights the ripple (it has no `STATUS_BIT_NULLSHADER`).
+/// The model is a flat ring facing up, so its lighting is worked out once
+/// for an up-facing normal and baked into the material's colour.
 pub fn make_ripple(
     commands: &mut Commands,
     maker: &mut RippleMaker,
@@ -60,6 +64,7 @@ pub fn make_ripple(
         return None;
     };
     let lighting = ObjectLighting::for_level(*maker.level, Shading::Lit);
+    let light = light_from_above(&lighting);
     let mut parts = Vec::new();
     let mut materials = Vec::new();
     for part in group.parts.iter().filter_map(|&i| model.parts.get(i)) {
@@ -69,21 +74,18 @@ pub fn make_ripple(
             .cloned()
             .unwrap_or_default();
         let model_alpha = base.base_color.alpha();
-        let material = maker.materials.add(ObjectMaterial {
-            base: StandardMaterial {
-                base_color: base
-                    .base_color
-                    .with_alpha(model_alpha * RIPPLE_START_OPACITY),
-                // `STATUS_BIT_GLOW`; blended materials don't write depth
-                // (`STATUS_BIT_NOZWRITE`).
-                alpha_mode: AlphaMode::Add,
-                // `STATUS_BIT_NOFOG`
-                fog_enabled: false,
-                // The extension does the lighting.
-                unlit: true,
-                ..base
-            },
-            extension: ObjectShading { lighting },
+        let lit = base.base_color.to_srgba();
+        let material = maker.materials.add(GlowMaterial {
+            // Lit in display space, as the fixed-function pipeline did.
+            color: Color::srgba(
+                lit.red * light.x,
+                lit.green * light.y,
+                lit.blue * light.z,
+                model_alpha * RIPPLE_START_OPACITY,
+            )
+            .to_linear(),
+            texture: base.base_color_texture,
+            draw_order: draw_order::RIPPLES,
         });
         parts.push((part.mesh.clone(), material.clone()));
         materials.push((material, model_alpha));
@@ -111,7 +113,7 @@ pub fn make_ripple(
 pub(super) fn move_ripples(
     time: Res<Time>,
     mut commands: Commands,
-    mut materials: ResMut<Assets<ObjectMaterial>>,
+    mut materials: ResMut<Assets<GlowMaterial>>,
     mut ripples: Query<(Entity, &mut Ripple, &mut Transform)>,
 ) {
     let dt = time.delta_secs();
@@ -123,12 +125,35 @@ pub(super) fn move_ripples(
         }
         for (handle, model_alpha) in &ripple.materials {
             if let Some(mut material) = materials.get_mut(handle) {
-                material
-                    .base
-                    .base_color
-                    .set_alpha(model_alpha * ripple.opacity);
+                material.color.alpha = model_alpha * ripple.opacity;
             }
         }
         transform.scale += Vec3::splat(RIPPLE_GROWTH_RATE * dt);
+    }
+}
+
+/// The light a surface facing straight up gets: the ambient light plus
+/// each fill light's N·L, clamped to 1 per channel, as object.wgsl does
+/// for lit objects.
+fn light_from_above(lighting: &ObjectLighting) -> Vec3 {
+    let mut light = lighting.ambient.truncate();
+    for (color, direction) in lighting.colors.iter().zip(&lighting.directions) {
+        light += color.truncate() * direction.y.max(0.0);
+    }
+    light.min(Vec3::ONE)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::level::CurrentLevel;
+
+    #[test]
+    fn ripples_are_lit_from_above() {
+        // Pond: the sun shines down, so the ring is brighter than ambient.
+        let lighting = ObjectLighting::for_level(CurrentLevel(2), Shading::Lit);
+        let light = light_from_above(&lighting);
+        assert!(light.cmpgt(lighting.ambient.truncate()).all());
+        assert!(light.cmple(Vec3::ONE).all());
     }
 }

@@ -4,6 +4,7 @@
 //! belong to one enemy or item (fire, gas, sparks of a checkpoint, …) are
 //! made by their owners from these pieces.
 
+mod glow;
 mod particles;
 mod render;
 mod ripple;
@@ -11,6 +12,7 @@ mod ripple;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
+pub use glow::{GlowMaterial, draw_order};
 pub use particles::{
     FULL_ALPHA, HIT_MIN_ALPHA, HIT_OBJECT_REACH, HURT_PLAYER_REACH, MAX_PARTICLE_GROUPS,
     MAX_PARTICLES, Particle, ParticleFlags, ParticleGroup, ParticleGroupDesc, ParticleGroupId,
@@ -29,7 +31,8 @@ pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ParticleGroups>()
+        app.add_plugins(glow::plugin)
+            .init_resource::<ParticleGroups>()
             .add_systems(Startup, render::load_particle_materials)
             .add_systems(OnExit(AppState::InGame), clear_particle_groups)
             .add_systems(

@@ -11,6 +11,7 @@ use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
+use super::glow::{GlowMaterial, draw_order};
 use super::particles::{ParticleGroup, ParticleGroupId, ParticleGroups, ParticleTexture};
 use crate::assets::original_path;
 use crate::camera::GameCamera;
@@ -20,7 +21,7 @@ use crate::state::AppState;
 #[derive(Resource, Debug, Clone)]
 pub(super) struct ParticleMaterials {
     textures: Vec<Handle<Image>>,
-    materials: Vec<Handle<StandardMaterial>>,
+    materials: Vec<Handle<GlowMaterial>>,
 }
 
 /// The mesh entity that draws one particle group.
@@ -32,7 +33,7 @@ pub(super) struct ParticleGroupMesh(ParticleGroupId);
 pub(super) fn load_particle_materials(
     mut commands: Commands,
     assets: Res<AssetServer>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut materials: ResMut<Assets<GlowMaterial>>,
 ) {
     let textures: Vec<Handle<Image>> = ParticleTexture::ALL
         .iter()
@@ -41,19 +42,12 @@ pub(super) fn load_particle_materials(
     let materials = textures
         .iter()
         .map(|texture| {
-            materials.add(StandardMaterial {
-                base_color_texture: Some(texture.clone()),
-                // `STATUS_BIT_GLOW`: added to what is behind, scaled by
-                // alpha (`glBlendFunc(GL_SRC_ALPHA, GL_ONE)`). Blended
-                // materials don't write depth (`STATUS_BIT_NOZWRITE`).
-                alpha_mode: AlphaMode::Add,
-                // `STATUS_BIT_NULLSHADER`
-                unlit: true,
-                // `STATUS_BIT_NOFOG`
-                fog_enabled: false,
-                cull_mode: None,
-                double_sided: true,
-                ..default()
+            // `STATUS_BIT_NULLSHADER`: the plain texture, faded by the
+            // particles' alpha in their vertex colours.
+            materials.add(GlowMaterial {
+                color: LinearRgba::WHITE,
+                texture: Some(texture.clone()),
+                draw_order: draw_order::GLOWY_PARTICLES,
             })
         })
         .collect();
