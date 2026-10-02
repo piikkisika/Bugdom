@@ -209,22 +209,31 @@ The item kinds come from `gTerrainItemAddRoutines` (Terrain/Terrain2.c) and
 ## 6. Build time in parallel work
 
 A cold build of the `bugdom` crate (all of Bevy, codegen) takes about 30
-minutes. A cold `cargo check` is much cheaper and is warmed by the session
-start hook. Measured in this container:
+minutes. The session start hook warms both the check cache and the test
+binaries. Measured in this container:
 
-| Command | Warm | After touching `lib.rs` |
-|---|---|---|
-| `cargo check -p bugdom --all-targets` | 7.5 s | — |
-| `cargo test -p bugdom --no-run` | 7 s | 49 s |
-| same, from a fresh worktree with the shared target directory | — | 63 s, no dependency rebuilt |
+| Command | Time |
+|---|---|
+| `cargo check -p bugdom --all-targets`, warm | 7.5 s |
+| `cargo test -p bugdom --no-run`, warm | 7 s |
+| the same after changing one file | 49 s |
+| `cargo test --workspace` in a new, prepared worktree | 66 s, no dependency rebuilt |
 
-So workers **do** run check, clippy and their tests, but every worktree
-builds into the main checkout's target directory
-(`CARGO_TARGET_DIR=/home/user/Bugdom/target`). Dependencies are then never
-rebuilt; only the workspace crates are compiled per worktree. Cargo's lock
-on the target directory serialises concurrent builds, which costs some
-waiting but never a rebuild. Workers do not change `RUSTFLAGS`, features or
-profiles, since any of those invalidates the whole cache.
+Workers therefore **do** run check, clippy and their tests. Each worktree is
+first prepared with `.claude/scripts/prepare-worktree.sh <worktree>`, which
+links `original/` and seeds the worktree's own `target/` with hard links to
+the main checkout's dependency artifacts. That takes no extra disk space.
+
+Worktrees must **not** share one target directory through
+`CARGO_TARGET_DIR`. Cargo hashes workspace crates relative to the workspace
+root, so two checkouts write the same artifact files. One checkout then
+treated the other's build as fresh: its tests ran with the other
+worktree's paths, and could equally run its code. The script leaves the
+workspace crates' artifacts out of the seeded directory, so each worktree
+builds them from its own sources.
+
+Workers do not change `RUSTFLAGS`, features or profiles, since any of those
+invalidates the cache.
 
 ## 7. Intentional differences **[review]**
 
