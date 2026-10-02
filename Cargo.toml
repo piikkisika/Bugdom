@@ -1,0 +1,36 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "CC-BY-NC-SA-4.0"
+publish = false
+
+[workspace.dependencies]
+# Only the features a 3D game needs, to keep compile time and binary size down.
+bevy = { version = "0.19.1", default-features = false, features = ["3d", "ui", "audio"] }
+# Compile out low-severity logs. Remove these features to profile with Tracy
+# (see <https://github.com/bevyengine/bevy/blob/main/docs/profiling.md#tracy-profiler>).
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
+bugdom_formats = { path = "crates/bugdom_formats" }
+
+[workspace.lints.clippy]
+# Bevy systems routinely take many parameters and complex query types.
+too_many_arguments = "allow"
+type_complexity = "allow"
+# Required for the `standard-macro-braces` setting in clippy.toml to take effect.
+nonstandard_macro_braces = "warn"
+
+# Compile our own code with light optimisation and dependencies (Bevy) fully
+# optimised, so debug builds stay playable.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"

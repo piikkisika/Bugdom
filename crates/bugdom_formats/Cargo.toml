@@ -1,0 +1,10 @@
+[package]
+name = "bugdom_formats"
+description = "Parsers for the original Bugdom data formats"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

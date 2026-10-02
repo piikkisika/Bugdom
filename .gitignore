@@ -1,6 +1,9 @@
 # Rust build output
 /target/
 
+# Local copy of .cargo/config_fast_builds.toml (opt-in per machine)
+/.cargo/config.toml
+
 # Converted assets (generated)
 /assets/converted/
 

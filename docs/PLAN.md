@@ -89,7 +89,9 @@ docs/                this plan, architecture notes, format notes
 ### Phase 0: Foundations
 - [x] Repository restructure: upstream as the `original/` submodule (pinned to `7d7ad99`); README and this plan
 - [ ] Build the reference C game from `original/` (CMake + SDL3) for side-by-side comparison
-- [ ] Cargo workspace skeleton, CI (fmt, clippy, test)
+- [x] Cargo workspace skeleton (BevyFlock-style lints, features and build profiles)
+- [x] Cloud session start hook (submodule, Linux dependencies, warm build cache)
+- [ ] CI (fmt, clippy, test)
 
 ### Phase 1: Data formats (parallel subagents, one per format)
 - [ ] Resource-fork reader

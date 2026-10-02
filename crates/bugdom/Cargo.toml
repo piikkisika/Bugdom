@@ -1,0 +1,35 @@
+[package]
+name = "bugdom"
+description = "Bugdom, ported to Bevy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bevy.workspace = true
+tracing.workspace = true
+bugdom_formats.workspace = true
+
+[features]
+# Default to a native development build. Build releases with
+# `--no-default-features`.
+default = ["dev_native"]
+dev = [
+    # Faster incremental builds by linking Bevy as a dynamic library.
+    "bevy/dynamic_linking",
+    "bevy/bevy_dev_tools",
+    "bevy/bevy_ui_debug",
+    # Better error messages from Bevy (reports the caller's source location).
+    "bevy/track_location",
+]
+dev_native = [
+    "dev",
+    # Hot-reload assets when they change on disk.
+    "bevy/file_watcher",
+    # Hot-reload embedded assets.
+    "bevy/embedded_watcher",
+]
+
+[lints]
+workspace = true

@@ -16,12 +16,26 @@ git clone --recurse-submodules <this repo>
 git submodule update --init --recursive
 ```
 
+## Building
+
+```sh
+cargo run -p bugdom                                  # development build (dynamic linking, asset hot-reload)
+cargo build -p bugdom --release --no-default-features  # standalone release build
+```
+
+On Linux, Bevy needs `libasound2-dev`, `libudev-dev`, `libwayland-dev` and
+`libxkbcommon-dev` (Ubuntu/Debian package names). For faster builds, copy
+`.cargo/config_fast_builds.toml` to `.cargo/config.toml` and follow its
+comments.
+
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `original/` | Upstream C source and game data (read-only submodule) |
-| `crates/` | Rust workspace (to be added in Phase 0) |
+| `crates/bugdom_formats` | Parsers for the original data formats (no Bevy dependency) |
+| `crates/bugdom_convert` | Converter from the original data to open formats |
+| `crates/bugdom` | The game |
 | `docs/PLAN.md` | Porting plan, architecture principles and progress checklist |
 
 ## License
