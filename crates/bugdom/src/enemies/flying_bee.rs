@@ -738,7 +738,10 @@ fn move_flying_bees(
         }
 
         // `KillFlyingBee` never deletes the bee, so its effects can wait
-        // until the collision ends.
+        // until the collision ends. Intentional difference (approved): the
+        // original goes on with the frame's flying logic after such a kill,
+        // so a dead bee could start a dive and become spiked again; here
+        // the dead bee's frame ends.
         let mut killed = false;
         collision.collide(&mut body, default_enemy_collision_mask(), &mut |_, _| {
             killed = true;

@@ -46,6 +46,11 @@ pub struct EatenBy {
     /// The mouth in that joint's space, before the enemy's scale
     /// (`gPondFishMouthOff`, `gBatMouthOff`).
     pub mouth_offset: Vec3,
+    /// The player's position follows the mouth, and the camera and item
+    /// window with it. The bat sets it; the pond fish doesn't, so on the
+    /// Pond the player stays where it was caught (the `LEVEL_TYPE_FOREST`
+    /// case in `MovePlayerBug_BeingEaten`).
+    pub follow: bool,
 }
 
 /// The player hangs under this enemy (`gCurrentCarryingFireFly`). The
@@ -62,6 +67,8 @@ pub enum Hold {
         by: Entity,
         joint: usize,
         mouth_offset: Vec3,
+        /// See [`EatenBy::follow`].
+        follow: bool,
     },
     /// Carried off: [`BugState::Carried`] (`FireFlyChasePlayer`).
     Carried { by: Entity },
@@ -200,11 +207,13 @@ fn hold_player(player: &mut PlayerDataItem, commands: &mut Commands, hold: Hold)
             by,
             joint,
             mouth_offset,
+            follow,
         } => {
             entity.insert(EatenBy {
                 enemy: by,
                 joint,
                 mouth_offset,
+                follow,
             });
         }
         Hold::Carried { by } => {
@@ -239,20 +248,20 @@ pub fn eaten_model_matrix(joint: Affine3A, eater_scale: f32, mouth_offset: Vec3)
 /// local transform under it.
 fn split_eaten_matrix(model: Affine3A, root_rotation: Quat) -> (Vec3, Transform) {
     let origin = Vec3::from(model.translation);
-    let root = Affine3A::from_rotation_translation(root_rotation, origin);
-    let local = root.inverse() * model;
-    (origin, Transform::from_matrix(Mat4::from(local)))
+    (origin, model_relative_to(model, root_rotation, origin))
+}
+
+/// The model's transform relative to a root at `root_translation`.
+fn model_relative_to(model: Affine3A, root_rotation: Quat, root_translation: Vec3) -> Transform {
+    let root = Affine3A::from_rotation_translation(root_rotation, root_translation);
+    Transform::from_matrix(Mat4::from(root.inverse() * model))
 }
 
 /// Keeps each eaten bug in its eater's mouth, and kills it if the eater is
-/// gone. The player's root follows the mouth, so the camera and the item
-/// window follow it.
+/// gone. Where the eater asks for it ([`EatenBy::follow`]), the player's
+/// root follows the mouth, so the camera and the item window follow it.
 ///
 /// Port of `MovePlayerBug_BeingEaten` (original/src/Player/Player_Bug.c).
-/// The original moves the player's coordinate to the mouth only on the
-/// Forest, where the camera tracks the bat; on the Pond it leaves it where
-/// the bug was caught. Here it always follows, so that every eaten player
-/// is treated alike.
 #[allow(clippy::type_complexity)]
 pub(super) fn follow_eaters(
     mut kills: MessageWriter<KillPlayer>,
@@ -299,8 +308,13 @@ pub(super) fn follow_eaters(
             };
             eaten_model_matrix(joint, scale, eaten.mouth_offset)
         };
-        let (origin, local) = split_eaten_matrix(matrix, transform.rotation);
-        transform.translation = origin;
+        let local = if eaten.follow {
+            let (origin, local) = split_eaten_matrix(matrix, transform.rotation);
+            transform.translation = origin;
+            local
+        } else {
+            model_relative_to(matrix, transform.rotation, transform.translation)
+        };
         if let Ok(mut model_transform) = transforms.p1().get_mut(model.0) {
             *model_transform = local;
         }
@@ -380,6 +394,7 @@ mod tests {
             by: fish,
             joint: 4,
             mouth_offset: Vec3::new(0.0, -17.0, -40.0),
+            follow: true,
         };
         hold(&mut world, player, eaten);
         assert_eq!(world.get::<BugState>(player), Some(&BugState::BeingEaten));
@@ -388,7 +403,8 @@ mod tests {
             Some(&EatenBy {
                 enemy: fish,
                 joint: 4,
-                mouth_offset: Vec3::new(0.0, -17.0, -40.0)
+                mouth_offset: Vec3::new(0.0, -17.0, -40.0),
+                follow: true,
             })
         );
         assert!(!collidable(&world, player));
@@ -480,6 +496,7 @@ mod tests {
                 enemy: gone,
                 joint: 0,
                 mouth_offset: Vec3::ZERO,
+                follow: false,
             },
         ));
         world
@@ -496,6 +513,19 @@ mod tests {
                 change_anims: false
             }]
         );
+    }
+
+    #[test]
+    fn without_following_the_root_stays_and_the_model_reaches_the_mouth() {
+        let mouth = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(0.85),
+            Quat::from_rotation_y(0.7),
+            Vec3::new(500.0, 80.0, -300.0),
+        );
+        let (rotation, at) = (Quat::from_rotation_y(-1.2), Vec3::new(100.0, 0.0, 40.0));
+        let local = model_relative_to(mouth, rotation, at);
+        let world = Affine3A::from_rotation_translation(rotation, at) * local.compute_affine();
+        assert!(world.abs_diff_eq(mouth, 1e-3), "{world:?}");
     }
 
     #[test]

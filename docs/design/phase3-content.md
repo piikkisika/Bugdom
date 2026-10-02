@@ -237,5 +237,12 @@ invalidates the cache.
 
 ## 7. Intentional differences **[review]**
 
-None planned. Any that come up during the ports will be listed here for
-approval before they merge.
+Approved by the owner:
+
+1. **Flying bee killed mid-collision** (`MoveFlyingBee_Flying`): the
+   original runs the rest of the frame's flying logic for a bee that a
+   hurt has just killed, so a dead bee could start a dive and become
+   spiked again. The port ends the dead bee's frame.
+
+Any others that come up during the ports are listed here for approval
+before they merge.

@@ -598,6 +598,9 @@ fn move_pond_fish(
                                 by: entity,
                                 joint: HEAD_JOINT,
                                 mouth_offset: MOUTH_OFFSET,
+                                // On the Pond the camera stays where the
+                                // bug was caught.
+                                follow: false,
                             },
                         });
                         if let Some(player) = brain.chew(dt) {
