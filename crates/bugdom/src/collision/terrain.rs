@@ -1,8 +1,6 @@
 //! Collision against the terrain.
 //!
-//! Port of the terrain parts of original/src/System/Collision.c. Object
-//! collision (box side detection) joins this module with the collision
-//! framework.
+//! Port of the terrain parts of original/src/System/Collision.c.
 
 use bevy::prelude::*;
 

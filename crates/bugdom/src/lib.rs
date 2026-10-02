@@ -5,9 +5,12 @@ pub mod assets;
 pub mod camera;
 pub mod collision;
 pub mod dev;
+pub mod fences;
 pub mod input;
+pub mod items;
 pub mod level;
 pub mod math;
+pub mod objects;
 pub mod physics;
 pub mod player;
 pub mod skeleton;
@@ -22,12 +25,21 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
+        // The original seeds its generator from the clock at boot.
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as u32);
+        app.insert_resource(math::GameRandom::from_seed(seed));
         app.add_plugins((
             state::StatePlugin,
             physics::PhysicsPlugin,
+            collision::CollisionPlugin,
             input::InputPlugin,
             terrain::TerrainPlugin,
             player::PlayerPlugin,
+            objects::ObjectsPlugin,
+            items::ItemsPlugin,
+            fences::FencePlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,
             dev::CapturePlugin,

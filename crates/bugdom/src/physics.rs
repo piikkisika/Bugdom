@@ -44,7 +44,22 @@ impl Plugin for PhysicsPlugin {
                     .disable::<ForcePlugin>()
                     .disable::<MassPropertyPlugin>()
                     .disable::<NarrowPhasePlugin<Collider>>(),
-            );
+            )
+            .add_systems(FixedPreUpdate, remember_previous_positions);
+    }
+}
+
+/// Where an entity was at the start of the tick (`OldCoord`). Box
+/// collision compares against it to tell which side was crossed.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+pub struct PreviousPosition(pub Vec3);
+
+/// Port of the `OldCoord` half of `KeepOldCollisionBoxes`
+/// (original/src/System/Objects2.c), which `MoveObjects` calls for every
+/// object before it moves.
+fn remember_previous_positions(mut query: Query<(&Transform, &mut PreviousPosition)>) {
+    for (transform, mut previous) in &mut query {
+        previous.0 = transform.translation;
     }
 }
 

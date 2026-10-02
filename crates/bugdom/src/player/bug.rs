@@ -6,14 +6,22 @@
 //! reads and writes the state and never touches the animator, and
 //! `animate_bug` (in `animation.rs`) starts the animation that matches it.
 
+use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
-use super::{PLAYER_BUG_HEAD_OFFSET, Player, PlayerToCameraAngle};
-use crate::collision::collide_floor_and_ceiling;
+use super::{
+    PLAYER_BOX, PLAYER_BUG_HEAD_OFFSET, PLAYER_RADIUS, Player, PlayerToCameraAngle,
+    player_collision_mask,
+};
+use crate::collision::{
+    BoxMover, BoxTarget, CollisionCandidates, CollisionKind, SolidSides, TriggerHit,
+    collide_floor_and_ceiling, resolve_box_collisions,
+};
+use crate::fences::Fences;
 use crate::input::{Action, ControlInput, ControlSettings};
 use crate::math::{turn_toward, yaw_forward, yaw_of};
-use crate::physics::{GroundContact, Velocity};
+use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::skeleton::SkeletonAnimator;
 use crate::terrain::TerrainMap;
 
@@ -92,6 +100,9 @@ pub struct PlayerTuning {
     /// Counts as on the ground for control while the feet are this close
     /// to the floor.
     pub control_ground_distance: f32,
+    /// The bug's radius against fences, as a fraction of its radius (it
+    /// squeezes a little closer).
+    pub fence_radius_scale: f32,
     /// Slopes push the bug while its feet are this close to the floor.
     pub slope_ground_distance: f32,
 }
@@ -118,6 +129,7 @@ impl Default for PlayerTuning {
             fall_landing_slowdown: 0.5,
             max_step: 15.0,
             control_ground_distance: 5.0,
+            fence_radius_scale: 0.7,
             slope_ground_distance: 15.0,
         }
     }
@@ -126,7 +138,10 @@ impl Default for PlayerTuning {
 /// Everything one tick of the bug's movement reads and writes, gathered so
 /// that the per-state functions read like the original.
 struct Bug<'a> {
+    entity: Entity,
     state: BugState,
+    /// Where the bug was at the start of the tick (`OldCoord`).
+    old_coord: Vec3,
     coord: Vec3,
     yaw: f32,
     velocity: Vec3,
@@ -138,6 +153,11 @@ struct Bug<'a> {
     input: &'a ControlInput,
     settings: &'a ControlSettings,
     map: &'a TerrainMap,
+    fences: Option<&'a Fences>,
+    candidates: &'a [BoxTarget],
+    /// Triggers that went off and stopped being solid this tick.
+    spent: EntityHashSet,
+    triggered: Vec<TriggerHit>,
     camera_angle: f32,
     dt: f32,
 }
@@ -151,9 +171,14 @@ pub fn move_bug(
     input: Res<ControlInput>,
     settings: Res<ControlSettings>,
     map: Res<TerrainMap>,
+    fences: Option<Res<Fences>>,
     camera_angle: Res<PlayerToCameraAngle>,
+    mut trigger_hits: MessageWriter<TriggerHit>,
     mut players: Query<
         (
+            Entity,
+            &PreviousPosition,
+            &CollisionCandidates,
             &mut BugState,
             &mut Transform,
             &mut Velocity,
@@ -165,11 +190,23 @@ pub fn move_bug(
         With<Player>,
     >,
 ) {
-    for (mut state, mut transform, mut velocity, mut speed, mut steering, mut ground, animator) in
-        &mut players
+    for (
+        entity,
+        previous,
+        candidates,
+        mut state,
+        mut transform,
+        mut velocity,
+        mut speed,
+        mut steering,
+        mut ground,
+        animator,
+    ) in &mut players
     {
         let mut bug = Bug {
+            entity,
             state: *state,
+            old_coord: **previous,
             coord: transform.translation,
             yaw: yaw_of(transform.rotation),
             velocity: **velocity,
@@ -181,6 +218,10 @@ pub fn move_bug(
             input: &input,
             settings: &settings,
             map: &map,
+            fences: fences.as_deref(),
+            candidates: &candidates.0,
+            spent: EntityHashSet::default(),
+            triggered: Vec::new(),
             camera_angle: **camera_angle,
             dt: time.delta_secs(),
         };
@@ -193,6 +234,7 @@ pub fn move_bug(
         }
         bug.update();
 
+        trigger_hits.write_batch(bug.triggered.drain(..));
         state.set_if_neq(bug.state);
         transform.translation = bug.coord;
         transform.rotation = Quat::from_rotation_y(bug.yaw);
@@ -339,8 +381,8 @@ impl Bug<'_> {
     /// keeping the bug on the terrain and letting slopes push it.
     ///
     /// Port of `DoPlayerMovementAndCollision`
-    /// (original/src/Player/Player_Control.c). Collision with objects and
-    /// fences, platforms and water arrive with those features.
+    /// (original/src/Player/Player_Control.c). Moving platforms and water
+    /// arrive with those features.
     fn move_and_collide(&mut self, no_control: bool) {
         let tuning = self.tuning;
         self.ground.on_ground = false;
@@ -393,6 +435,7 @@ impl Bug<'_> {
         for _ in 0..passes {
             let old_coord = self.coord;
             self.coord += self.velocity * dt;
+            self.collide_with_objects(dt);
 
             // The original measured the speed without the vertical motion,
             // which slowed the bug on gentle slopes at high frame rates; the
@@ -436,8 +479,68 @@ impl Bug<'_> {
             }
         }
 
+        if let Some(fences) = self.fences {
+            let feet = self.coord.y + PLAYER_BOX.bottom;
+            fences.collide(
+                self.map,
+                self.old_coord.xz(),
+                &mut self.coord,
+                &mut self.velocity,
+                PLAYER_RADIUS * tuning.fence_radius_scale,
+                feet,
+            );
+        }
+
         self.ground.dist_to_floor =
-            self.coord.y - self.map.floor_height(self.coord.x, self.coord.z);
+            self.coord.y + PLAYER_BOX.bottom - self.map.floor_height(self.coord.x, self.coord.z);
+    }
+
+    /// Bumps into solid objects and sets off triggers.
+    ///
+    /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
+    /// Enemies, hurting objects, platforms, water and viscous objects
+    /// arrive with those features.
+    fn collide_with_objects(&mut self, dt: f32) {
+        let mover = BoxMover {
+            entity: self.entity,
+            is_player: true,
+            shape: PLAYER_BOX,
+            old_coord: self.old_coord,
+            platform_velocity: Vec3::ZERO,
+        };
+        let result = resolve_box_collisions(
+            &mover,
+            &mut self.coord,
+            &mut self.velocity,
+            player_collision_mask(),
+            self.candidates,
+            dt,
+            &mut self.spent,
+        );
+        if result.on_ground {
+            self.ground.on_ground = true;
+        }
+
+        for hit in &result.hits {
+            let target = &self.candidates[hit.target];
+            if self.spent.contains(&target.entity) {
+                continue;
+            }
+            // Something that can't be pushed through sends the bug back to
+            // where it was safe, unless it landed on top.
+            if target.kinds.has_all(CollisionKind::Impenetrable)
+                && !target.kinds.has_all(CollisionKind::Impenetrable2)
+                && !hit.sides.contains(SolidSides::BOTTOM)
+            {
+                self.coord.x = self.old_coord.x;
+                self.coord.z = self.old_coord.z;
+            }
+        }
+        for trigger in result.triggered {
+            if !self.triggered.iter().any(|t| t.trigger == trigger.trigger) {
+                self.triggered.push(trigger);
+            }
+        }
     }
 
     fn add_horizontal(&mut self, delta: Vec2) {
@@ -455,7 +558,18 @@ mod tests {
     /// Runs the bug's movement for `ticks` ticks from the Lawn's start,
     /// with the same input every tick (apart from presses, which only the
     /// first tick sees), calling `each` after every tick.
-    fn simulate(ticks: usize, held: &[Action], pressed: &[Action], mut each: impl FnMut(&Bug)) {
+    fn simulate(ticks: usize, held: &[Action], pressed: &[Action], each: impl FnMut(&Bug)) {
+        simulate_among(&[], ticks, held, pressed, each);
+    }
+
+    /// [`simulate`] with solid objects around.
+    fn simulate_among(
+        candidates: &[BoxTarget],
+        ticks: usize,
+        held: &[Action],
+        pressed: &[Action],
+        mut each: impl FnMut(&Bug),
+    ) {
         let map = TerrainMap::load_for_tests("Lawn", false);
         let tuning = PlayerTuning::default();
         let settings = ControlSettings::default();
@@ -474,7 +588,9 @@ mod tests {
         );
         for tick in 0..ticks {
             let mut bug = Bug {
+                entity: Entity::PLACEHOLDER,
                 state: state.0,
+                old_coord: state.1,
                 coord: state.1,
                 yaw: state.2,
                 velocity: state.3,
@@ -486,6 +602,10 @@ mod tests {
                 input: if tick == 0 { &first } else { &rest },
                 settings: &settings,
                 map: &map,
+                fences: None,
+                candidates,
+                spent: EntityHashSet::default(),
+                triggered: Vec::new(),
                 camera_angle: 0.0,
                 dt: DT,
             };
@@ -552,5 +672,32 @@ mod tests {
         let mut top = 0.0f32;
         simulate(180, &[Action::Forward], &[], |bug| top = top.max(bug.speed));
         assert!((top - 700.0).abs() < 1.0, "top speed {top}");
+    }
+
+    #[test]
+    fn walking_into_a_rock_stops_at_its_side() {
+        // A wall-like rock across the bug's path, 300 units ahead (−Z).
+        let (x, z) = (12720.0, 15780.0);
+        let rock =
+            crate::collision::CollisionBox::new(10_000.0, -10_000.0, -500.0, 500.0, 50.0, -50.0)
+                .at(Vec3::new(x, 0.0, z - 300.0));
+        let target = BoxTarget {
+            entity: Entity::from_raw_u32(7).unwrap(),
+            kinds: CollisionKind::Misc.into(),
+            solid: SolidSides::ALL,
+            boxes: vec![rock],
+            old_boxes: vec![rock],
+            velocity: Vec3::ZERO,
+            trigger: None,
+        };
+        let mut nearest = f32::MAX;
+        simulate_among(&[target], 180, &[Action::Forward], &[], |bug| {
+            nearest = nearest.min(bug.coord.z);
+        });
+        // The bug's back is its −Z side, 42 units from its middle.
+        assert!(
+            (nearest - (rock.front + 42.0 + 1.0)).abs() < 0.01,
+            "got to {nearest}"
+        );
     }
 }

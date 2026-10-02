@@ -79,6 +79,47 @@ pub fn yaw_forward(yaw: f32) -> Vec2 {
     Vec2::new(-yaw.sin(), -yaw.cos())
 }
 
+/// The original's random number generator, so that random placement and
+/// behaviour have the same distribution.
+/// Port of `MyRandomLong` and `RandomFloat` (original/src/System/Misc.c).
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub struct GameRandom {
+    seed: [u32; 3],
+}
+
+impl Default for GameRandom {
+    /// The original's seed before `SetMyRandomSeed`.
+    fn default() -> Self {
+        Self {
+            seed: [0x2a80_ce30, 0, 0],
+        }
+    }
+}
+
+impl GameRandom {
+    /// Port of `SetMyRandomSeed`.
+    pub fn from_seed(seed: u32) -> Self {
+        Self { seed: [seed, 0, 0] }
+    }
+
+    /// Port of `MyRandomLong`. The original's arithmetic is 32-bit and wraps.
+    pub fn next_u32(&mut self) -> u32 {
+        let [seed0, seed1, seed2] = &mut self.seed;
+        *seed1 ^= (*seed2 >> 5).wrapping_mul(1_568_397_607);
+        *seed0 = seed0.wrapping_add(1).wrapping_mul(3_141_592_621);
+        *seed2 ^= (*seed1 >> 7)
+            .wrapping_add(*seed0)
+            .wrapping_mul(2_435_386_481);
+        *seed2
+    }
+
+    /// A number from 0 to 1, in steps of 1/4095. Port of `RandomFloat`.
+    pub fn next_f32(&mut self) -> f32 {
+        let r = self.next_u32() & 0xfff;
+        r as f32 * (1.0 / 0xfff as f32)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -99,6 +140,15 @@ mod tests {
             let found = yaw_from_point_to_point(0.0, Vec2::ZERO, forward * 100.0);
             assert!((found - yaw).abs() < 1e-4, "{yaw} → {found}");
         }
+    }
+
+    #[test]
+    fn random_floats_stay_in_range() {
+        let mut random = GameRandom::default();
+        let values: Vec<f32> = (0..1000).map(|_| random.next_f32()).collect();
+        assert!(values.iter().all(|v| (0.0..=1.0).contains(v)));
+        // Not stuck on one value.
+        assert!(values.windows(2).any(|w| w[0] != w[1]));
     }
 
     #[test]

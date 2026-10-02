@@ -127,9 +127,9 @@ The original game is not built as part of this project.
 
 ### Phase 2: Engine core (main session, because it defines the shared component vocabulary)
 - [ ] Game states and the screen flow
-- [ ] Terrain rendering (chunks, texture array material), fog, camera
+- [x] Terrain rendering (chunks, texture array material), fog, camera
 - [ ] Fixed-timestep player controller (avian queries), skeletal animation
-- [ ] Spawning terrain items, collision categories, triggers framework
+- [x] Spawning terrain items, collision categories, triggers framework
 - **Milestone:** the player can walk, jump and roll in the Lawn level, and it feels the same as the reference (swimming is checked once Phase 3 adds liquids). Design: [`docs/design/phase2-engine-core.md`](design/phase2-engine-core.md)
 
 ### Phase 3: Content (parallel subagents in separate git worktrees)

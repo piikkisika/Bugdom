@@ -11,6 +11,7 @@ use crate::assets::model::Model;
 use crate::assets::original_path;
 use crate::assets::skeleton::SkeletonAsset;
 use crate::assets::terrain::TerrainAsset;
+use crate::fences::FenceKind;
 use crate::level::{CurrentLevel, GLOBAL_MODELS, NUM_LEVELS};
 use crate::player::PLAYER_SKELETON;
 
@@ -48,6 +49,8 @@ pub struct LevelAssets {
     /// Global model files first, then the level type's.
     pub models: Vec<Handle<Model>>,
     pub player_skeleton: Handle<SkeletonAsset>,
+    /// The textures of the fence types the level type has (`PrimeFences`).
+    pub fence_textures: Vec<(FenceKind, Handle<Image>)>,
 }
 
 fn starting_level() -> usize {
@@ -75,6 +78,10 @@ fn load_level_assets(mut commands: Commands, assets: Res<AssetServer>, level: Re
         terrain: assets.load(original_path(def.terrain)),
         models,
         player_skeleton: assets.load(original_path(PLAYER_SKELETON)),
+        fence_textures: FenceKind::on_level(def.level_type)
+            .iter()
+            .map(|kind| (*kind, assets.load(original_path(&kind.texture_path()))))
+            .collect(),
     });
 }
 
@@ -86,7 +93,13 @@ fn finish_loading(
 ) {
     let handles = std::iter::once(level_assets.terrain.id().untyped())
         .chain(level_assets.models.iter().map(|h| h.id().untyped()))
-        .chain(std::iter::once(level_assets.player_skeleton.id().untyped()));
+        .chain(std::iter::once(level_assets.player_skeleton.id().untyped()))
+        .chain(
+            level_assets
+                .fence_textures
+                .iter()
+                .map(|(_, h)| h.id().untyped()),
+        );
     let mut ready = true;
     for id in handles {
         if let Some(bevy::asset::LoadState::Failed(error)) = assets.get_load_state(id) {

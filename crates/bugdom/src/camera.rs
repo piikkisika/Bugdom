@@ -3,7 +3,7 @@
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
-use avian3d::prelude::TransformInterpolation;
+use avian3d::prelude::{Collider, SpatialQuery, SpatialQueryFilter, TransformInterpolation};
 use bevy::camera::{ClearColorConfig, Exposure};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
@@ -12,6 +12,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
+use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind};
 use crate::input::{Action, ControlInput, InputEnabled};
 use crate::level::{
     AMBIENT_BRIGHTNESS, CAMERA_FOV, CurrentLevel, FILL_BRIGHTNESS, HITHER_DISTANCE,
@@ -39,6 +40,7 @@ impl Plugin for CameraPlugin {
             .add_systems(
                 FixedUpdate,
                 follow_player
+                    .in_set(CameraSystems::Follow)
                     .after(PlayerSystems::Move)
                     .run_if(in_state(AppState::InGame)),
             )
@@ -58,6 +60,8 @@ impl Plugin for CameraPlugin {
 pub enum CameraSystems {
     /// Places the camera behind the player when the level starts.
     Place,
+    /// Moves the follow camera after the player each fixed tick.
+    Follow,
 }
 
 /// The camera that shows the game world.
@@ -116,8 +120,9 @@ fn set_up_level_view(
 ///
 /// Bevy's diffuse term divides by π, so each light's illuminance is
 /// multiplied by π to give the original's `colour × brightness × N·L`.
-/// Objects get a material that matches the original's lighting exactly
-/// with the collision framework; until then they are close.
+/// Objects and skeletons use `ObjectMaterial`, which applies the same
+/// lights the original's way and ignores these; they light the few plain
+/// Bevy materials that are lit, such as moss fences.
 fn spawn_level_lights(mut commands: Commands, level: Res<CurrentLevel>) {
     let settings = level.def().settings();
     let [ambient, fill0, fill1] = settings.light_colors;
@@ -195,6 +200,13 @@ impl FollowCamera {
     const MAX_STEP: f32 = SUPERTILE_TILES as f32 * TILE_SIZE;
     /// Clearance from the floor and ceiling.
     const TERRAIN_CLEARANCE: f32 = 60.0;
+    /// Half the size of the box around the camera's target that looks for
+    /// objects blocking it, and how far above them it goes.
+    const BLOCKER_REACH: f32 = 100.0;
+    const BLOCKER_CLEARANCE: f32 = 100.0;
+    /// The camera only rises onto blockers less than this far above it;
+    /// for taller ones it rises by this much.
+    const MAX_BLOCKER_CLIMB: f32 = 500.0;
     /// `InitCamera` primes the camera with this many updates of this
     /// length.
     const PRIME_UPDATES: usize = 100;
@@ -222,13 +234,15 @@ impl FollowCamera {
     /// Moves the camera toward its place behind the player at `feet`, and
     /// updates the angle of the camera around the player.
     ///
-    /// Port of `MoveCamera_Manual`. Lifting the camera over objects that
-    /// block it (`CTYPE_BLOCKCAMERA`) arrives with the collision framework.
+    /// Port of `MoveCamera_Manual`. `blocker_top` finds the top of an
+    /// object that blocks the camera (`CTYPE_BLOCKCAMERA`) near a point, so
+    /// the camera can rise over it.
     pub fn update(
         &mut self,
         feet: Vec3,
         swivel: f32,
         map: &TerrainMap,
+        blocker_top: impl Fn(Vec3) -> Option<f32>,
         camera_angle: &mut f32,
         dt: f32,
     ) {
@@ -265,7 +279,15 @@ impl FollowCamera {
 
         // The further away, the higher.
         let distance = (quick_distance(from.xz(), to.xz()) - Self::CLOSEST).max(0.0);
-        let target_y = to.y + distance * Self::HEIGHT_FACTOR + Self::MIN_HEIGHT;
+        let mut target_y = to.y + distance * Self::HEIGHT_FACTOR + Self::MIN_HEIGHT;
+        // Rise over objects in the way, if they aren't too tall.
+        if let Some(top) = blocker_top(Vec3::new(target_xz.x, target_y, target_xz.y)) {
+            if top - target_y < Self::MAX_BLOCKER_CLIMB {
+                target_y = top + Self::BLOCKER_CLEARANCE;
+            } else {
+                target_y += Self::MAX_BLOCKER_CLIMB;
+            }
+        }
         from.y = self.from.y + (target_y - self.from.y) * Self::FROM_ACCEL_Y * dt;
         // Never below the look-at point, so the camera can't flip over.
         from.y = from.y.max(to.y + Self::MIN_HEIGHT);
@@ -300,10 +322,12 @@ fn place_follow_camera(
     };
     let mut camera = FollowCamera::behind(player.translation, crate::math::yaw_of(player.rotation));
     for _ in 0..FollowCamera::PRIME_UPDATES {
+        // No items are out yet when the original primes its camera.
         camera.update(
             player.translation,
             0.0,
             &map,
+            |_| None,
             &mut camera_angle,
             FollowCamera::PRIME_DT,
         );
@@ -322,6 +346,8 @@ fn follow_player(
     time: Res<Time>,
     input: Res<ControlInput>,
     map: Res<TerrainMap>,
+    spatial: SpatialQuery,
+    blockers: Query<(&Transform, &CollisionBoxes), Without<GameCamera>>,
     mut camera_angle: ResMut<PlayerToCameraAngle>,
     players: Query<&Transform, (With<Player>, Without<GameCamera>)>,
     mut cameras: Query<(&mut FollowCamera, &mut Transform), (With<GameCamera>, Without<FlyCamera>)>,
@@ -336,11 +362,42 @@ fn follow_player(
             player.translation,
             input.camera_swivel(),
             &map,
+            |target| camera_blocker_top(&spatial, &blockers, target),
             &mut camera_angle,
             dt,
         );
         *transform = camera.transform();
     }
+}
+
+/// The top of the first box of an object blocking the camera within
+/// [`FollowCamera::BLOCKER_REACH`] of `target`.
+///
+/// Port of the `DoSimpleBoxCollision` call in `MoveCamera_Manual`. Like the
+/// original, it uses the object's first box even when another box is the
+/// one in the way.
+fn camera_blocker_top(
+    spatial: &SpatialQuery,
+    blockers: &Query<(&Transform, &CollisionBoxes), Without<GameCamera>>,
+    target: Vec3,
+) -> Option<f32> {
+    let reach = FollowCamera::BLOCKER_REACH;
+    let area = CollisionBox::new(reach, -reach, -reach, reach, reach, -reach).at(target);
+    let shape = Collider::cuboid(reach * 2.0, reach * 2.0, reach * 2.0);
+    let filter = SpatialQueryFilter::from_mask(CollisionKind::BlockCamera);
+    let mut hits = spatial.shape_intersections(&shape, target, Quat::IDENTITY, &filter);
+    // The original takes the first in its object list.
+    hits.sort();
+    hits.into_iter().find_map(|entity| {
+        let (transform, boxes) = blockers.get(entity).ok()?;
+        let position = transform.translation;
+        boxes
+            .0
+            .iter()
+            .any(|b| area.overlaps(&b.at(position)))
+            .then(|| boxes.0.first().map(|b| b.at(position).top))
+            .flatten()
+    })
 }
 
 /// Switches the camera to the debug fly camera and back with F1. The
