@@ -13,7 +13,10 @@ Rust + Bevy port of Bugdom, written as idiomatic ECS. Plan and progress are in
 
 ## Before you finish
 Run all of these and make sure they pass: `cargo fmt --all`,
-`cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`.
+`cargo clippy --workspace --all-targets -- -D warnings`, and
+`cargo test -p <crate>` for each crate you changed. Testing `bugdom` builds
+all of Bevy, which is slow the first time in a session; `bugdom_formats`
+tests do not need Bevy.
 
 ## Bevy
 - The Bevy version is pinned in the workspace `Cargo.toml` (0.19). Your

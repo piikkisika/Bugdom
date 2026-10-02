@@ -29,6 +29,7 @@ fi
 
 rustup component add clippy rustfmt >/dev/null 2>&1
 
-# Warm the build cache; the container state is cached after this hook runs.
+# Warm the check cache; the container state is cached after this hook runs.
+# Test binaries are not pre-built: a full Bevy build takes several times longer
+# than a check, and most work can be tested per crate (`cargo test -p <crate>`).
 cargo clippy --workspace --all-targets --quiet
-cargo test --workspace --no-run --quiet
