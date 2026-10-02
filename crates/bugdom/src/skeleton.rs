@@ -8,6 +8,7 @@
 
 use std::sync::Arc;
 
+use bevy::math::Affine3A;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -38,6 +39,104 @@ pub enum SkeletonSystems {
     Advance,
 }
 
+/// The game's skeletal characters (`SKELETON_TYPE_*` in
+/// original/src/Headers/skeletonobj.h), each with its own skeleton file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SkeletonType {
+    BoxerFly,
+    /// The player's bug.
+    Me,
+    Slug,
+    Ant,
+    FireAnt,
+    WaterBug,
+    DragonFly,
+    PondFish,
+    Mosquito,
+    Foot,
+    Spider,
+    Caterpiller,
+    FireFly,
+    Bat,
+    LadyBug,
+    RootSwing,
+    KingAnt,
+    Larva,
+    FlyingBee,
+    WorkerBee,
+    QueenBee,
+    Roach,
+    Buddy,
+    Skippy,
+}
+
+impl SkeletonType {
+    /// Every type, in the original's order.
+    pub const ALL: [Self; 24] = [
+        Self::BoxerFly,
+        Self::Me,
+        Self::Slug,
+        Self::Ant,
+        Self::FireAnt,
+        Self::WaterBug,
+        Self::DragonFly,
+        Self::PondFish,
+        Self::Mosquito,
+        Self::Foot,
+        Self::Spider,
+        Self::Caterpiller,
+        Self::FireFly,
+        Self::Bat,
+        Self::LadyBug,
+        Self::RootSwing,
+        Self::KingAnt,
+        Self::Larva,
+        Self::FlyingBee,
+        Self::WorkerBee,
+        Self::QueenBee,
+        Self::Roach,
+        Self::Buddy,
+        Self::Skippy,
+    ];
+
+    /// The file's name without its extension, from `LoadSkeletonFile`
+    /// (original/src/System/File.c).
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Self::BoxerFly => "BoxerFly",
+            Self::Me => "DoodleBug",
+            Self::Slug => "Slug",
+            Self::Ant => "Ant",
+            Self::FireAnt => "WingedFireAnt",
+            Self::WaterBug => "WaterBug",
+            Self::DragonFly => "DragonFly",
+            Self::PondFish => "PondFish",
+            Self::Mosquito => "Mosquito",
+            Self::Foot => "Foot",
+            Self::Spider => "Spider",
+            Self::Caterpiller => "Caterpillar",
+            Self::FireFly => "FireFly",
+            Self::Bat => "Bat",
+            Self::LadyBug => "LadyBug",
+            Self::RootSwing => "RootSwing",
+            Self::KingAnt => "AntKing",
+            Self::Larva => "Larva",
+            Self::FlyingBee => "FlyingBee",
+            Self::WorkerBee => "WorkerBee",
+            Self::QueenBee => "QueenBee",
+            Self::Roach => "Roach",
+            Self::Buddy => "Buddy",
+            Self::Skippy => "Skippy",
+        }
+    }
+
+    /// The skeleton file, relative to the data directory. Its geometry is
+    /// the `.3dmf` of the same name next to it.
+    pub fn path(self) -> String {
+        format!("Skeletons/{}.skeleton.rsrc", self.file_name())
+    }
+}
+
 /// A skeletal model. Its rig (joint entities and skinned meshes) is spawned
 /// as children once the asset has loaded.
 #[derive(Component, Debug, Clone)]
@@ -50,6 +149,71 @@ pub struct SkeletonRig {
     pub definition: Arc<SkeletonDefinition>,
     /// Joint entities, indexed like the definition's bones.
     pub joints: Vec<Entity>,
+    /// Each joint's transform relative to its parent as last posed: a copy
+    /// of the joint entities' transforms (`jointTransformMatrix`), so that
+    /// gameplay can find joints without querying them.
+    pose: Vec<Transform>,
+}
+
+impl SkeletonRig {
+    fn new(definition: Arc<SkeletonDefinition>, joints: Vec<Entity>) -> Self {
+        let pose = definition
+            .bones
+            .iter()
+            .map(|bone| Transform::from_translation(bind_offset(&definition, bone)))
+            .collect();
+        Self {
+            definition,
+            joints,
+            pose,
+        }
+    }
+
+    /// The transform from a joint's space to the world, given `base`, the
+    /// rig entity's own transform to the world (for the player, its
+    /// transform times its model's). `None` if there is no such joint.
+    ///
+    /// Port of `FindJointFullMatrix` (original/src/Skeleton/SkeletonJoints.c).
+    /// As there, the joints are where the last frame drew them and `base`
+    /// is where the object is now.
+    pub fn joint_transform(&self, joint: usize, base: Affine3A) -> Option<Affine3A> {
+        let mut matrix = self.pose.get(joint)?.compute_affine();
+        let mut bone = self.definition.bones.get(joint)?;
+        // Bounded, so that a parent loop in a bad file can't hang the game.
+        for _ in 0..self.definition.bones.len() {
+            let Some(parent) = bone.parent else {
+                return Some(base * matrix);
+            };
+            matrix = self.pose.get(parent)?.compute_affine() * matrix;
+            bone = self.definition.bones.get(parent)?;
+        }
+        None
+    }
+}
+
+/// The world position of `offset`, a point in a joint's space, given the
+/// rig entity's transform to the world as `base` (see
+/// [`SkeletonRig::joint_transform`]). `None` if there is no such joint.
+///
+/// Port of `FindCoordOnJoint` (original/src/Skeleton/SkeletonJoints.c).
+pub fn joint_position(
+    rig: &SkeletonRig,
+    joint: usize,
+    offset: Vec3,
+    base: Affine3A,
+) -> Option<Vec3> {
+    rig.joint_transform(joint, base)
+        .map(|matrix| matrix.transform_point3(offset))
+}
+
+/// A bone's bind-pose position relative to its parent. Bone coordinates in
+/// the files are absolute.
+fn bind_offset(definition: &SkeletonDefinition, bone: &bugdom_formats::skeleton::Bone) -> Vec3 {
+    let parent_coord = bone
+        .parent
+        .and_then(|p| definition.bones.get(p))
+        .map_or(Vec3::ZERO, |p| Vec3::from(p.coord));
+    Vec3::from(bone.coord) - parent_coord
 }
 
 /// Flags that animation events set and clear, which gameplay code reads to
@@ -192,31 +356,7 @@ fn spawn_rigs(
         let Some(asset) = assets.get(&skeleton.0) else {
             continue;
         };
-        let definition = &asset.definition;
-
-        // Bones are spawned in index order and parented afterwards, because
-        // the files do not guarantee that a parent comes before its children.
-        // They start in the bind pose; bone coordinates are absolute.
-        let joints: Vec<Entity> = definition
-            .bones
-            .iter()
-            .map(|bone| {
-                let parent_coord = bone
-                    .parent
-                    .map_or(Vec3::ZERO, |p| Vec3::from(definition.bones[p].coord));
-                commands
-                    .spawn((
-                        Name::new(bone.name.clone()),
-                        Transform::from_translation(Vec3::from(bone.coord) - parent_coord),
-                    ))
-                    .id()
-            })
-            .collect();
-        for (bone, &joint) in definition.bones.iter().zip(&joints) {
-            let parent = bone.parent.map_or(entity, |p| joints[p]);
-            commands.entity(joint).insert(ChildOf(parent));
-        }
-
+        let joints = spawn_joints(&mut commands, &asset.definition, entity);
         for part in &asset.parts {
             commands.spawn((
                 Mesh3d(part.mesh.clone()),
@@ -229,11 +369,39 @@ fn spawn_rigs(
             ));
         }
 
-        commands.entity(entity).insert(SkeletonRig {
-            definition: definition.clone(),
-            joints,
-        });
+        commands
+            .entity(entity)
+            .insert(SkeletonRig::new(asset.definition.clone(), joints));
     }
+}
+
+/// Spawns a skeleton's joint entities under `rig`, in the bind pose.
+fn spawn_joints(
+    commands: &mut Commands,
+    definition: &SkeletonDefinition,
+    rig: Entity,
+) -> Vec<Entity> {
+    // Bones are spawned in index order and parented afterwards, because the
+    // files do not guarantee that a parent comes before its children.
+    let joints: Vec<Entity> = definition
+        .bones
+        .iter()
+        .map(|bone| {
+            commands
+                .spawn((
+                    Name::new(bone.name.clone()),
+                    Transform::from_translation(bind_offset(definition, bone)),
+                ))
+                .id()
+        })
+        .collect();
+    for (bone, &joint) in definition.bones.iter().zip(&joints) {
+        let parent = bone.parent.and_then(|p| joints.get(p)).copied();
+        commands
+            .entity(joint)
+            .insert(ChildOf(parent.unwrap_or(rig)));
+    }
+    joints
 }
 
 /// Advances animation time and handles animation events.
@@ -358,10 +526,11 @@ fn next_event_at(anim: &bugdom_formats::skeleton::Animation, time: f32) -> usize
 /// joint's transform. Port of `GetModelCurrentPosition` and
 /// `GetModelMorphPosition` (original/src/Skeleton/SkeletonAnim.c).
 fn pose_joints(
-    mut animators: Query<(&mut SkeletonAnimator, &SkeletonRig)>,
+    mut animators: Query<(&mut SkeletonAnimator, &mut SkeletonRig)>,
     mut transforms: Query<&mut Transform>,
 ) {
-    for (mut animator, rig) in &mut animators {
+    for (mut animator, mut rig) in &mut animators {
+        let rig = &mut *rig;
         let Some(anim) = rig.definition.animations.get(animator.anim) else {
             continue;
         };
@@ -388,6 +557,9 @@ fn pose_joints(
                 pose
             };
             animator.pose[joint] = pose;
+            if let Some(posed) = rig.pose.get_mut(joint) {
+                *posed = pose.transform();
+            }
             if let Some(mut transform) = rig
                 .joints
                 .get(joint)
@@ -481,6 +653,81 @@ mod tests {
         for (axis, row) in [Vec3::X, Vec3::Y, Vec3::Z].into_iter().zip(rows) {
             assert!((q * axis - row).length() < 1e-5, "{axis} -> {}", q * axis);
         }
+    }
+
+    fn load_definition(kind: SkeletonType) -> Arc<SkeletonDefinition> {
+        let path = bugdom_formats::original_data_dir().join(kind.path());
+        Arc::new(bugdom_formats::skeleton::open(&path).expect("the skeleton parses"))
+    }
+
+    #[test]
+    fn joints_start_at_their_bind_pose_coordinates() {
+        let definition = load_definition(SkeletonType::Me);
+        let rig = SkeletonRig::new(definition.clone(), Vec::new());
+        let base = Affine3A::from_scale_rotation_translation(
+            Vec3::splat(0.5),
+            Quat::IDENTITY,
+            Vec3::new(100.0, 20.0, -30.0),
+        );
+        for (joint, bone) in definition.bones.iter().enumerate() {
+            let at = joint_position(&rig, joint, Vec3::new(0.0, 2.0, 0.0), base)
+                .expect("the joint exists");
+            let expected = base.transform_point3(Vec3::from(bone.coord) + Vec3::Y * 2.0);
+            assert!(
+                (at - expected).length() < 1e-3,
+                "{}: {at} != {expected}",
+                bone.name
+            );
+        }
+        assert_eq!(
+            joint_position(&rig, definition.bones.len(), Vec3::ZERO, base),
+            None
+        );
+    }
+
+    /// A posed joint is where the rendered joint entity ends up.
+    #[test]
+    fn joint_positions_match_the_posed_joint_entities() {
+        let definition = load_definition(SkeletonType::Ant);
+        let mut app = App::new();
+        app.add_plugins(bevy::transform::TransformPlugin)
+            .add_systems(PostUpdate, pose_joints.before(TransformSystems::Propagate));
+        let root_transform = Transform::from_xyz(300.0, -40.0, 1200.0)
+            .with_rotation(Quat::from_rotation_y(1.2))
+            .with_scale(Vec3::splat(1.3));
+        let root = app.world_mut().spawn(root_transform).id();
+        let joints = spawn_joints(&mut app.world_mut().commands(), &definition, root);
+        app.world_mut().flush();
+        let mut animator = SkeletonAnimator::default();
+        animator.set_anim(1);
+        animator.time = 7.5;
+        app.world_mut().entity_mut(root).insert((
+            SkeletonRig::new(definition.clone(), joints.clone()),
+            animator,
+        ));
+
+        app.update();
+
+        let world = app.world();
+        let rig = world.get::<SkeletonRig>(root).expect("the rig exists");
+        let offset = Vec3::new(3.0, -5.0, 8.0);
+        let base = root_transform.compute_affine();
+        let mut moved = false;
+        for (joint, &entity) in joints.iter().enumerate() {
+            let at = joint_position(rig, joint, offset, base).expect("the joint exists");
+            let global = world.get::<GlobalTransform>(entity).expect("propagated");
+            let expected = global.transform_point(offset);
+            assert!(
+                (at - expected).length() < 1e-2,
+                "joint {joint}: {at} != {expected}"
+            );
+            let bind = base.transform_point3(Vec3::from(definition.bones[joint].coord) + offset);
+            moved |= (at - bind).length() > 1.0;
+        }
+        assert!(
+            moved,
+            "the animation should move some joint off its bind pose"
+        );
     }
 
     #[test]

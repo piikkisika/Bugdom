@@ -40,7 +40,7 @@ use crate::combat::Health;
 use crate::input::{ControlInput, ControlSettings, LocalControls};
 use crate::objects::{ModelSpawner, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
-use crate::skeleton::{Skeleton, SkeletonSystems};
+use crate::skeleton::{Skeleton, SkeletonSystems, SkeletonType};
 use crate::state::{AppState, LevelAssets};
 use crate::terrain::{PlayerStart, TerrainMap, TerrainSystems};
 
@@ -219,9 +219,6 @@ pub fn player_collision_mask() -> LayerMask {
     ])
 }
 
-/// The bug's skeleton file (`SKELETON_TYPE_ME`).
-pub const PLAYER_SKELETON: &str = "Skeletons/DoodleBug.skeleton.rsrc";
-
 /// The angle around the player of the camera that follows it, which makes
 /// the mouse controls camera-relative (`gPlayerToCameraAngle`). The camera
 /// updates it after the player moves.
@@ -254,6 +251,11 @@ fn spawn_player(
     terrains: Res<Assets<TerrainAsset>>,
     mut models: ModelSpawner,
 ) {
+    // Every level loads the bug's skeleton.
+    let Some(skeleton) = level_assets.skeleton(SkeletonType::Me) else {
+        error!("The level has no player skeleton");
+        return;
+    };
     let ladybugs = terrains.get(&level_assets.terrain).map_or(0, |terrain| {
         terrain
             .items
@@ -292,7 +294,7 @@ fn spawn_player(
     let model = commands
         .spawn((
             Name::new("Player model"),
-            Skeleton(level_assets.player_skeleton.clone()),
+            Skeleton(skeleton),
             Transform::from_scale(Vec3::splat(PLAYER_BUG_SCALE)),
             TransformInterpolation,
             ChildOf(player),

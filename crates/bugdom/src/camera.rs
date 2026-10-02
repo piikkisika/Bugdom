@@ -3,7 +3,7 @@
 
 use std::f32::consts::{FRAC_PI_2, PI};
 
-use avian3d::prelude::{Collider, SpatialQuery, SpatialQueryFilter, TransformInterpolation};
+use avian3d::prelude::{SpatialQuery, TransformInterpolation};
 use bevy::camera::{ClearColorConfig, Exposure};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
@@ -12,7 +12,7 @@ use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
-use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind};
+use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind, SolidSides, box_query};
 use crate::input::{Action, ControlInput, InputEnabled, LocalControls};
 use crate::level::{
     AMBIENT_BRIGHTNESS, CAMERA_FOV, CurrentLevel, FILL_BRIGHTNESS, HITHER_DISTANCE,
@@ -400,7 +400,7 @@ fn follow_player(
     time: Res<Time>,
     map: Res<TerrainMap>,
     spatial: SpatialQuery,
-    blockers: Query<(&Transform, &CollisionBoxes), Without<GameCamera>>,
+    blockers: Query<(&Transform, &CollisionBoxes, &SolidSides), Without<GameCamera>>,
     mut players: Query<
         (&Transform, &ControlInput, &mut PlayerToCameraAngle),
         (With<Player>, Without<GameCamera>),
@@ -436,26 +436,16 @@ fn follow_player(
 /// one in the way.
 fn camera_blocker_top(
     spatial: &SpatialQuery,
-    blockers: &Query<(&Transform, &CollisionBoxes), Without<GameCamera>>,
+    blockers: &Query<(&Transform, &CollisionBoxes, &SolidSides), Without<GameCamera>>,
     target: Vec3,
 ) -> Option<f32> {
     let reach = FollowCamera::BLOCKER_REACH;
     let area = CollisionBox::new(reach, -reach, -reach, reach, reach, -reach).at(target);
-    let shape = Collider::cuboid(reach * 2.0, reach * 2.0, reach * 2.0);
-    let filter = SpatialQueryFilter::from_mask(CollisionKind::BlockCamera);
-    let mut hits = spatial.shape_intersections(&shape, target, Quat::IDENTITY, &filter);
-    // The original takes the first in its object list.
-    hits.sort();
-    hits.into_iter().find_map(|entity| {
-        let (transform, boxes) = blockers.get(entity).ok()?;
-        let position = transform.translation;
-        boxes
-            .0
-            .iter()
-            .any(|b| area.overlaps(&b.at(position)))
-            .then(|| boxes.0.first().map(|b| b.at(position).top))
-            .flatten()
-    })
+    let hit = box_query(spatial, blockers, area, CollisionKind::BlockCamera)
+        .into_iter()
+        .next()?;
+    let (transform, boxes, _) = blockers.get(hit.entity).ok()?;
+    boxes.0.first().map(|b| b.at(transform.translation).top)
 }
 
 /// Switches the camera to the debug fly camera and back with F1. The

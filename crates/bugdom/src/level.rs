@@ -7,6 +7,8 @@
 
 use bevy::prelude::*;
 
+use crate::skeleton::SkeletonType;
+
 /// Number of levels in a game (`NUM_LEVELS`).
 pub const NUM_LEVELS: usize = 10;
 
@@ -63,7 +65,24 @@ impl LevelDef {
     pub fn settings(&self) -> &'static LevelTypeSettings {
         self.level_type.settings()
     }
+
+    /// Every skeleton the level loads: the global ones, the level type's,
+    /// and the king ant on its own level (`LoadLevelArt`).
+    pub fn skeletons(&self) -> Vec<SkeletonType> {
+        let king = (self.level_type == LevelType::AntHill && self.area == ANT_KING_AREA)
+            .then_some(SkeletonType::KingAnt);
+        GLOBAL_SKELETONS
+            .iter()
+            .copied()
+            .chain(king)
+            .chain(self.settings().skeletons.iter().copied())
+            .collect()
+    }
 }
+
+/// The ant hill area of the king ant's level. `LoadLevelArt` loads the king
+/// ant for `LEVEL_NUM_ANTKING`, the only level in this area.
+const ANT_KING_AREA: u8 = 1;
 
 /// `gLevelTable`, with the terrain each level loads in `LoadLevelArt`.
 pub const LEVELS: [LevelDef; NUM_LEVELS] = [
@@ -150,6 +169,8 @@ pub struct LevelTypeSettings {
     /// Level-specific model files, relative to the data directory
     /// (`MODEL_GROUP_LEVELSPECIFIC` and `MODEL_GROUP_LEVELSPECIFIC2`).
     pub models: &'static [&'static str],
+    /// Level-specific skeletons (`LoadASkeleton` in `LoadLevelArt`).
+    pub skeletons: &'static [SkeletonType],
     /// `gLevelHasCyc`
     pub has_cyclorama: bool,
     /// `gLevelHasCeiling`
@@ -223,6 +244,11 @@ impl LevelType {
 
 const LAWN: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/Lawn_Models1.3dmf", "Models/Lawn_Models2.3dmf"],
+    skeletons: &[
+        SkeletonType::BoxerFly,
+        SkeletonType::Slug,
+        SkeletonType::Ant,
+    ],
     has_cyclorama: true,
     has_ceiling: false,
     supertile_active_range: 5,
@@ -238,6 +264,13 @@ const LAWN: LevelTypeSettings = LevelTypeSettings {
 
 const POND: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/Pond_Models.3dmf"],
+    skeletons: &[
+        SkeletonType::Mosquito,
+        SkeletonType::WaterBug,
+        SkeletonType::PondFish,
+        SkeletonType::Skippy,
+        SkeletonType::Slug,
+    ],
     has_cyclorama: false,
     has_ceiling: false,
     supertile_active_range: 4,
@@ -253,6 +286,15 @@ const POND: LevelTypeSettings = LevelTypeSettings {
 
 const FOREST: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/Forest_Models.3dmf"],
+    skeletons: &[
+        SkeletonType::DragonFly,
+        SkeletonType::Foot,
+        SkeletonType::Spider,
+        SkeletonType::Caterpiller,
+        SkeletonType::Bat,
+        SkeletonType::FlyingBee,
+        SkeletonType::Ant,
+    ],
     has_cyclorama: true,
     has_ceiling: false,
     supertile_active_range: 5,
@@ -268,6 +310,12 @@ const FOREST: LevelTypeSettings = LevelTypeSettings {
 
 const HIVE: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/BeeHive_Models.3dmf"],
+    skeletons: &[
+        SkeletonType::Larva,
+        SkeletonType::FlyingBee,
+        SkeletonType::WorkerBee,
+        SkeletonType::QueenBee,
+    ],
     has_cyclorama: false,
     has_ceiling: true,
     supertile_active_range: 4,
@@ -283,6 +331,14 @@ const HIVE: LevelTypeSettings = LevelTypeSettings {
 
 const NIGHT: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/Night_Models.3dmf"],
+    skeletons: &[
+        SkeletonType::FireAnt,
+        SkeletonType::FireFly,
+        SkeletonType::Caterpiller,
+        SkeletonType::Slug,
+        SkeletonType::Roach,
+        SkeletonType::Ant,
+    ],
     has_cyclorama: true,
     has_ceiling: false,
     supertile_active_range: 4,
@@ -298,6 +354,13 @@ const NIGHT: LevelTypeSettings = LevelTypeSettings {
 
 const ANTHILL: LevelTypeSettings = LevelTypeSettings {
     models: &["Models/AntHill_Models.3dmf"],
+    skeletons: &[
+        SkeletonType::Slug,
+        SkeletonType::Ant,
+        SkeletonType::FireAnt,
+        SkeletonType::RootSwing,
+        SkeletonType::Roach,
+    ],
     has_cyclorama: false,
     has_ceiling: true,
     supertile_active_range: 4,
@@ -311,5 +374,58 @@ const ANTHILL: LevelTypeSettings = LevelTypeSettings {
     clear_color_with_cyclorama: [0.15, 0.07, 0.15],
 };
 
+/// Skeletons every level loads (`LoadLevelArt`).
+pub const GLOBAL_SKELETONS: [SkeletonType; 3] =
+    [SkeletonType::Me, SkeletonType::LadyBug, SkeletonType::Buddy];
+
 /// Model files every level loads (`LoadLevelArt`).
 pub const GLOBAL_MODELS: [&str; 2] = ["Models/Global_Models1.3dmf", "Models/Global_Models2.3dmf"];
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use bugdom_formats::{skeleton, skin, tdmf};
+
+    use super::*;
+
+    /// Every skeleton a level loads exists, parses, and binds to its
+    /// geometry, as the skeleton asset loader does.
+    #[test]
+    fn every_level_skeleton_loads() {
+        let used: HashSet<SkeletonType> = LEVELS.iter().flat_map(LevelDef::skeletons).collect();
+        let dir = bugdom_formats::original_data_dir();
+        for kind in used {
+            let path = dir.join(kind.path());
+            let definition = skeleton::open(&path)
+                .unwrap_or_else(|e| panic!("{kind:?}: {}: {e}", path.display()));
+            let model_path = dir.join(format!("Skeletons/{}.3dmf", kind.file_name()));
+            let model = tdmf::open(&model_path)
+                .unwrap_or_else(|e| panic!("{kind:?}: {}: {e}", model_path.display()));
+            skin::bind(&definition, &model).unwrap_or_else(|e| panic!("{kind:?}: {e}"));
+        }
+    }
+
+    #[test]
+    fn levels_load_their_skeletons_once() {
+        for def in &LEVELS {
+            let skeletons = def.skeletons();
+            let unique: HashSet<_> = skeletons.iter().collect();
+            assert_eq!(unique.len(), skeletons.len(), "{}", def.name);
+            assert!(skeletons.contains(&SkeletonType::Me), "{}", def.name);
+            let king = skeletons.contains(&SkeletonType::KingAnt);
+            assert_eq!(king, def.name == "Ant King", "{}", def.name);
+        }
+    }
+
+    /// Only the skeletons no level loads are missing from the levels.
+    #[test]
+    fn every_skeleton_type_is_used() {
+        let used: HashSet<SkeletonType> = LEVELS.iter().flat_map(LevelDef::skeletons).collect();
+        let unused: Vec<_> = SkeletonType::ALL
+            .into_iter()
+            .filter(|kind| !used.contains(kind))
+            .collect();
+        assert_eq!(unused, []);
+    }
+}
