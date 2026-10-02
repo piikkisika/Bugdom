@@ -15,7 +15,7 @@ mod anthill;
 mod hive;
 mod honey_tube;
 pub mod kind;
-mod pickups;
+pub mod pickups;
 mod pond;
 mod scenery;
 mod traps;
