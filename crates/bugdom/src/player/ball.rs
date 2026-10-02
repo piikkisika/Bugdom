@@ -16,7 +16,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 
 use super::bug::BugState;
-use super::health::{kill_player, knock_on_butt};
+use super::health::{DeferredKnock, kill_player, knock_on_butt};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem, PlayerMessages};
 use super::{Player, PlayerForm, PlayerTuning};
 use crate::input::Action;
@@ -191,6 +191,13 @@ pub fn move_ball(
         // What the ball ran into hurt it during the move; the ball only
         // turns into the knocked bug now that its move is over
         // (`gPlayerKnockOnButt`, original/src/Player/Player_Ball.c).
+        // A knock from something the ball ran into this move replaces one
+        // that other objects sent before it, as the original's single
+        // `gPlayerKnockOnButtDelta` does.
+        let knocked = knocked.or(player.deferred_knock.map(|k| k.0));
+        if player.deferred_knock.is_some() {
+            commands.entity(player.entity).remove::<DeferredKnock>();
+        }
         if died {
             kill_player(&mut player, &mut commands, context.tuning().kill_delay);
         } else if let Some(velocity) = knocked {

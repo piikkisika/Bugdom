@@ -16,7 +16,8 @@ use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
 use super::contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
 use super::health::{
-    HurtOutcome, HurtPlayer, InvincibleTimer, KNOCK_RISE_SPEED, ShieldTimer, take_hurt,
+    DeferredKnock, HurtOutcome, HurtPlayer, InvincibleTimer, KNOCK_RISE_SPEED, ShieldTimer,
+    take_hurt,
 };
 use super::{
     Dying, PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle,
@@ -84,6 +85,7 @@ pub(super) struct PlayerData {
     pub health: &'static mut Health,
     pub invincible: &'static mut InvincibleTimer,
     pub shield: &'static mut ShieldTimer,
+    pub deferred_knock: Option<&'static DeferredKnock>,
 }
 
 /// Everything one tick of movement reads and writes, gathered so that the

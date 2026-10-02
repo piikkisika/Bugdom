@@ -45,6 +45,13 @@ pub struct InvincibleTimer(pub f32);
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
 pub struct ShieldTimer(pub f32);
 
+/// A knock waiting for the end of the ball's next move, where the ball
+/// turns into the knocked bug (`gPlayerKnockOnButt` and
+/// `gPlayerKnockOnButtDelta`). Turning into the ball any other way drops it
+/// (`InitPlayer_Ball`).
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct DeferredKnock(pub Vec3);
+
 /// The player has been set on fire (`gTorchPlayer`). The flames and the
 /// damage they do arrive with the torch effect; dying or starting the level
 /// puts the fire out.
@@ -177,7 +184,15 @@ pub(super) fn hurt_players(
             }
             HurtOutcome::Hurt => {
                 if hurt.knock {
-                    knock_on_butt(&mut player, knock_velocity(hurt.source, &velocities));
+                    let velocity = knock_velocity(hurt.source, &velocities);
+                    // `KnockPlayerBugOnButt` with `allowBall` false.
+                    if *player.form == PlayerForm::Ball {
+                        commands
+                            .entity(player.entity)
+                            .insert(DeferredKnock(velocity));
+                    } else {
+                        knock_on_butt(&mut player, velocity);
+                    }
                 }
             }
         }
@@ -423,20 +438,21 @@ mod tests {
     }
 
     #[test]
-    fn a_knocked_ball_turns_back_into_the_bug() {
+    fn a_ball_hurt_by_others_is_knocked_after_its_next_move() {
         let mut world = world();
         let player = spawn_player(&mut world, PlayerForm::Ball, 1.0);
         world.write_message(HurtPlayer::new(player, None, 0.25));
         world
             .run_system_once(hurt_players)
             .expect("the system runs");
-        assert_eq!(world.get::<PlayerForm>(player), Some(&PlayerForm::Bug));
-        assert_eq!(
-            world.get::<BugState>(player),
-            Some(&BugState::KnockedOnButt)
-        );
+        // Hurt at once, but still the ball, with the knock waiting.
+        assert_eq!(world.get::<Health>(player), Some(&Health(0.75)));
+        assert_eq!(world.get::<PlayerForm>(player), Some(&PlayerForm::Ball));
         // No source: no knock velocity.
-        assert_eq!(world.get::<Velocity>(player), Some(&Velocity(Vec3::ZERO)));
+        assert_eq!(
+            world.get::<DeferredKnock>(player),
+            Some(&DeferredKnock(Vec3::ZERO))
+        );
     }
 
     #[test]

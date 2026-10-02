@@ -10,7 +10,7 @@ use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
 use super::ball::become_ball;
-use super::health::kill_player;
+use super::health::{DeferredKnock, kill_player};
 use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::{Dying, Player, PlayerForm, PlayerModel};
@@ -126,6 +126,11 @@ pub fn move_bug(
 
         let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
         let (knocked, died) = (bug.motion.knocked.is_some(), bug.motion.died);
+        // A ball's waiting knock is dropped once it is the bug; turning back
+        // into the ball would clear it anyway (`InitPlayer_Ball`).
+        if player.deferred_knock.is_some() {
+            commands.entity(player.entity).remove::<DeferredKnock>();
+        }
         bug.motion.store(&mut player, &mut commands, &mut messages);
         player.state.set_if_neq(state);
         if died {
