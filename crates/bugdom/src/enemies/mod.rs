@@ -114,7 +114,7 @@ use bevy::math::primitives::ViewFrustum;
 
 use crate::camera::GameCamera;
 use crate::math::quick_distance;
-use crate::objects::{ModelSpawner, attach_shadow};
+use crate::objects::{ModelRef, ModelSpawner, Shading, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::player::PlayerSystems;
 use crate::skeleton::{Skeleton, SkeletonAnimator, SkeletonType};
@@ -286,7 +286,9 @@ pub struct Enemy {
 
 /// The child entity that shows an enemy's skeleton, like the player's
 /// `PlayerModel`. Its animator and animation flags are what the original
-/// keeps in `theNode->Skeleton` and `theNode->Flag`.
+/// keeps in `theNode->Skeleton` and `theNode->Flag`. For an enemy drawn
+/// with a plain model ([`EnemyLook::Model`]), it is that model's
+/// [`ObjectModel`](crate::objects::ObjectModel) entity, with no animator.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnemyModel(pub Entity);
 
@@ -501,13 +503,25 @@ pub enum EnemySource {
     Spawned,
 }
 
+/// What an enemy is drawn with.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EnemyLook {
+    /// A skeleton (`MakeEnemySkeleton`), like most enemies.
+    Skeleton(SkeletonType),
+    /// One object of the level's model files (`MakeNewDisplayGroupObject`),
+    /// like the tick. It is lit by the level's lights.
+    Model(ModelRef),
+}
+
 /// What a new enemy skeleton is: `MakeEnemySkeleton`'s arguments and the
 /// fields the Add and Prime routines set on top. [`Self::new`] has
 /// `MakeEnemySkeleton`'s defaults; the builder methods set the rest.
+/// [`Self::display_group`] is the same for an enemy drawn with a plain
+/// model.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnemySkeleton {
     pub kind: EnemyKind,
-    pub skeleton: SkeletonType,
+    pub look: EnemyLook,
     /// World x and z.
     pub position: Vec2,
     pub scale: f32,
@@ -538,9 +552,20 @@ impl EnemySkeleton {
     /// kinds `Enemy | BlockCamera`, from no item, with no box, health,
     /// damage or shadow yet, playing animation 0.
     pub fn new(kind: EnemyKind, skeleton: SkeletonType, position: Vec2, scale: f32) -> Self {
+        Self::with_look(kind, EnemyLook::Skeleton(skeleton), position, scale)
+    }
+
+    /// [`Self::new`] for an enemy drawn with one object of the level's
+    /// model files (`MakeNewDisplayGroupObject` and the enemy fields its
+    /// caller sets, as `MakeTickEnemy` does). The animation is unused.
+    pub fn display_group(kind: EnemyKind, model: ModelRef, position: Vec2, scale: f32) -> Self {
+        Self::with_look(kind, EnemyLook::Model(model), position, scale)
+    }
+
+    fn with_look(kind: EnemyKind, look: EnemyLook, position: Vec2, scale: f32) -> Self {
         Self {
             kind,
-            skeleton,
+            look,
             position,
             scale,
             source: EnemySource::Spawned,
@@ -662,26 +687,40 @@ impl<'w, 's> EnemySpawner<'w, 's> {
         &mut self.commands
     }
 
-    /// Spawns an enemy skeleton and returns its root entity, or `None` if
-    /// the level doesn't load that skeleton.
+    /// Spawns an enemy and returns its root entity, or `None` if the level
+    /// doesn't load its skeleton or model.
     ///
     /// Port of `MakeEnemySkeleton` (original/src/Enemies/Enemy.c) and of
     /// what the Add and Prime routines set after it: the root has the
     /// collision, motion, [`Health`], [`Damage`], [`HomePosition`]
     /// (`InitCoord`) and [`BoundingRadius`]; its [`EnemyModel`] child has
-    /// the skeleton, scaled.
+    /// the skeleton, scaled. For [`EnemyLook::Model`] the child is the
+    /// model instead (`MakeNewDisplayGroupObject`).
     pub fn spawn(&mut self, def: EnemySkeleton) -> Option<Entity> {
-        let Some(handle) = self.level_assets.skeleton(def.skeleton) else {
-            error!("The level has no {:?} skeleton", def.skeleton);
-            return None;
+        let (skeleton, radius) = match def.look {
+            EnemyLook::Skeleton(skeleton) => {
+                let Some(handle) = self.level_assets.skeleton(skeleton) else {
+                    error!("The level has no {skeleton:?} skeleton");
+                    return None;
+                };
+                let radius = self.skeletons.get(&handle).map_or_else(
+                    || {
+                        warn!("The {skeleton:?} skeleton isn't loaded");
+                        0.0
+                    },
+                    |s| s.radius,
+                );
+                (Some(handle), radius)
+            }
+            EnemyLook::Model(model) => {
+                let Some(radius) = self.models.radius(model) else {
+                    error!("The level has no {model:?} model");
+                    return None;
+                };
+                (None, radius)
+            }
         };
-        let radius = self.skeletons.get(&handle).map_or_else(
-            || {
-                warn!("The {:?} skeleton isn't loaded", def.skeleton);
-                0.0
-            },
-            |s| s.radius,
-        ) * def.scale;
+        let radius = radius * def.scale;
         let (x, z) = (def.position.x, def.position.y);
         let position = Vec3::new(x, self.map.floor_height(x, z) - def.foot_offset, z);
         let root = self
@@ -724,20 +763,33 @@ impl<'w, 's> EnemySpawner<'w, 's> {
         }
         // Last, so that the counting sees whether it is on a spline.
         self.commands.entity(root).insert(Enemy { kind: def.kind });
-        let mut animator = SkeletonAnimator::default();
-        animator.set_anim(def.anim);
-        let model = self
-            .commands
-            .spawn((
-                Name::new("Enemy model"),
-                Skeleton(handle),
-                animator,
-                Transform::from_scale(Vec3::splat(def.scale)),
-                TransformInterpolation,
-                ChildOf(root),
-            ))
-            .id();
-        self.commands.entity(root).insert(EnemyModel(model));
+        let scale = Transform::from_scale(Vec3::splat(def.scale));
+        let model = match (skeleton, def.look) {
+            (Some(handle), _) => {
+                let mut animator = SkeletonAnimator::default();
+                animator.set_anim(def.anim);
+                Some(
+                    self.commands
+                        .spawn((
+                            Name::new("Enemy model"),
+                            Skeleton(handle),
+                            animator,
+                            scale,
+                            TransformInterpolation,
+                            ChildOf(root),
+                        ))
+                        .id(),
+                )
+            }
+            (None, EnemyLook::Model(model)) => {
+                self.models
+                    .spawn(&mut self.commands, root, model, Shading::Lit, scale)
+            }
+            (None, EnemyLook::Skeleton(_)) => None,
+        };
+        if let Some(model) = model {
+            self.commands.entity(root).insert(EnemyModel(model));
+        }
         if let Some(scale) = def.shadow {
             attach_shadow(&mut self.commands, &mut self.models, root, scale, false);
         }

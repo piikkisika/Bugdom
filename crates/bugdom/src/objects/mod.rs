@@ -151,6 +151,15 @@ pub struct ModelSpawner<'w> {
 }
 
 impl ModelSpawner<'_> {
+    /// The radius of `model`'s bounding sphere, unscaled
+    /// (`gObjectGroupRadiusList`), or `None` if the model file has no such
+    /// object or isn't loaded.
+    pub fn radius(&self, model: ModelRef) -> Option<f32> {
+        let handle = self.level_assets.models.get(model.file as usize)?;
+        let file = self.models.get(handle)?;
+        file.groups.get(model.object).map(|group| group.radius)
+    }
+
     /// Spawns `model` as a child of `parent`, with the given rotation and
     /// scale. Returns the model entity, or `None` if the model file has no
     /// such object.
