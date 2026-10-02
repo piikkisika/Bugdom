@@ -242,8 +242,8 @@ truth too, but make it explicit: a `BugState` component (a plain enum: `Stand`,
    interpolation.
 5. The collision framework, terrain item streaming, Lawn's scenery items
    (rocks, flowers, wall ends, door, log), fences and checkpoints.
-6. Ball form (roll-up, unroll, ball physics). Swimming and water patches stay
-   with the liquids in Phase 3; the Phase 2 milestone checks swimming once
-   they exist.
+6. Ball form (roll-up, unroll, ball physics), then the liquids (water,
+   honey, slime and lava patches) and swimming, so that the milestone can
+   check swimming.
 7. The milestone checklist (jump height, run speed, camera behaviour) for the
    owner to compare against the original.

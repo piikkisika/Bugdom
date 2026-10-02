@@ -134,7 +134,7 @@ The original game is not built as part of this project.
 
 ### Phase 3: Content (parallel subagents in separate git worktrees)
 - [ ] 18 enemies (`Enemies/*.c`), each as its own plugin
-- [ ] Items, traps, triggers, liquids, dragonfly ride, spline objects
+- [ ] Items, traps, triggers, dragonfly ride, spline objects
 - [ ] Effects and particles (`Items/Effects.c`): first the particle groups and
   the ripple and splash objects, then each effect on its own, so they can be
   done in parallel. The engine already marks where these fire:
