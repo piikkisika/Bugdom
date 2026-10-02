@@ -26,7 +26,9 @@ use crate::items::{ItemSpawn, RegisterItemKind, kind};
 use crate::liquids::Underwater;
 use crate::math::{GameRandom, quick_distance, turn_toward, yaw_forward, yaw_of};
 use crate::physics::{PreviousPosition, Velocity};
-use crate::player::{KillPlayer, Player, PlayerForm, PlayerModel, PlayerRespawned};
+use crate::player::{
+    Hold, HoldPlayer, KillPlayer, Player, PlayerForm, PlayerModel, PlayerRespawned,
+};
 use crate::skeleton::{
     AnimationFlags, SkeletonAnimator, SkeletonRig, SkeletonType, joint_position,
 };
@@ -437,6 +439,7 @@ fn move_pond_fish(
         (With<Player>, Without<PondFishBrain>),
     >,
     mut kills: MessageWriter<KillPlayer>,
+    mut holds: MessageWriter<HoldPlayer>,
 ) {
     let dt = time.delta_secs();
     let prey: Vec<Prey> = players
@@ -586,9 +589,17 @@ fn move_pond_fish(
                         brain.eaten = Some(player);
                         brain.eating = true;
                         brain.eaten_timer = EAT_TIME;
-                        // The player's side of being eaten (its
-                        // `PLAYER_ANIM_BEINGEATEN`, `CType = 0` and
-                        // `MovePlayerBug_BeingEaten`) isn't ported yet.
+                        // The bug goes into the mouth and out of others'
+                        // collisions (`PLAYER_ANIM_BEINGEATEN`,
+                        // `CType = 0`).
+                        holds.write(HoldPlayer {
+                            player,
+                            hold: Hold::Eaten {
+                                by: entity,
+                                joint: HEAD_JOINT,
+                                mouth_offset: MOUTH_OFFSET,
+                            },
+                        });
                         if let Some(player) = brain.chew(dt) {
                             kills.write(KillPlayer {
                                 player,

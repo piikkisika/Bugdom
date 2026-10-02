@@ -24,7 +24,11 @@ mod anim {
     pub const LAND: usize = 7;
     pub const SWIM: usize = 8;
     pub const FALL_ON_BUTT: usize = 9;
+    pub const BEING_EATEN: usize = 12;
     pub const DEATH: usize = 13;
+    pub const BLOOD_SUCK: usize = 14;
+    pub const WEBBED: usize = 15;
+    pub const CARRIED: usize = 17;
 }
 
 /// Walk animation speed per unit of walking speed (`MovePlayerBug_Walk`).
@@ -67,6 +71,10 @@ fn animation_for(state: BugState) -> usize {
         BugState::Swim => anim::SWIM,
         BugState::KnockedOnButt => anim::FALL_ON_BUTT,
         BugState::Death => anim::DEATH,
+        BugState::BeingEaten => anim::BEING_EATEN,
+        BugState::BloodSuck => anim::BLOOD_SUCK,
+        BugState::Webbed => anim::WEBBED,
+        BugState::Carried => anim::CARRIED,
     }
 }
 
@@ -82,6 +90,15 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
         // `MovePlayerBug_Kick` ends with `SetSkeletonAnim`.
         (Some(BugState::Kick), BugState::Stand) => None,
         (None, _) => None,
+        // The enemies' holds and releases (`SeeIfFishEatsPlayer`,
+        // `MoveMosquito_Dive`, `WebBulletHitCallback`,
+        // `FireFlyChasePlayer`, `MoveMosquito_Suck`, `MoveWebSphere`) and
+        // the carried bug's drop (`MovePlayerBug_Carried`).
+        (_, BugState::BeingEaten | BugState::BloodSuck | BugState::Carried) => Some(7.0),
+        (_, BugState::Webbed) => Some(5.0),
+        (Some(BugState::BloodSuck), BugState::Stand) => Some(7.0),
+        (Some(BugState::Webbed), BugState::Stand) => Some(3.0),
+        (Some(BugState::Carried), BugState::Fall) => Some(5.0),
         (_, BugState::Swim) => Some(5.0),
         (Some(BugState::Swim), BugState::Stand) => Some(5.0),
         (Some(BugState::Jump), BugState::Land) => Some(7.0),
@@ -167,5 +184,41 @@ mod tests {
         );
         assert_eq!(morph_rate(Some(BugState::Walk), BugState::Death), None);
         assert_eq!(morph_rate(None, BugState::Death), None);
+    }
+
+    #[test]
+    fn holds_blend_in_and_out_at_the_enemies_rates() {
+        assert_eq!(animation_for(BugState::BeingEaten), 12);
+        assert_eq!(animation_for(BugState::Carried), 17);
+        assert_eq!(
+            morph_rate(Some(BugState::Swim), BugState::BeingEaten),
+            Some(7.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::Walk), BugState::BloodSuck),
+            Some(7.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::Walk), BugState::Webbed),
+            Some(5.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::Jump), BugState::Carried),
+            Some(7.0)
+        );
+        // From the ball, the new bug starts in the hold's pose.
+        assert_eq!(morph_rate(None, BugState::Webbed), None);
+        assert_eq!(
+            morph_rate(Some(BugState::BloodSuck), BugState::Stand),
+            Some(7.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::Webbed), BugState::Stand),
+            Some(3.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::Carried), BugState::Fall),
+            Some(5.0)
+        );
     }
 }

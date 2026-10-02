@@ -11,6 +11,7 @@ mod bug;
 pub mod contact;
 mod effects;
 mod health;
+mod held;
 mod inventory;
 mod kick;
 mod movement;
@@ -34,6 +35,10 @@ pub use health::{
     HurtOutcome, HurtPlayer, INVINCIBILITY_DURATION, INVINCIBILITY_DURATION_DEATH, InvincibleTimer,
     KNOCK_RISE_SPEED, KillPlayer, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
 };
+pub use held::{
+    CARRIED_DROP, CarriedBy, EatenBy, Hold, HoldPlayer, ReleasePlayer, eaten_model_matrix,
+    player_layers,
+};
 pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 
@@ -42,10 +47,12 @@ use crate::collision::{
     CollisionBox, CollisionCandidates, CollisionKind, CollisionSystems, SolidSides, solid_object,
 };
 use crate::combat::Health;
+use crate::enemies::EnemySystems;
 use crate::input::{ControlInput, ControlSettings, LocalControls};
 use crate::objects::{ModelSpawner, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::skeleton::{Skeleton, SkeletonSystems, SkeletonType};
+use crate::splines::SplineSystems;
 use crate::state::{AppState, LevelAssets};
 use crate::terrain::{PlayerStart, TerrainMap, TerrainSystems};
 
@@ -57,6 +64,8 @@ impl Plugin for PlayerPlugin {
             .add_message::<PlayerRespawned>()
             .add_message::<HurtPlayer>()
             .add_message::<KillPlayer>()
+            .add_message::<HoldPlayer>()
+            .add_message::<ReleasePlayer>()
             .add_message::<TouchedEnemy>()
             .add_message::<BallHitEnemy>()
             .add_message::<EnemyBopped>()
@@ -88,6 +97,7 @@ impl Plugin for PlayerPlugin {
                     ball::move_ball,
                     health::count_down_shield,
                     animation::animate_bug,
+                    held::follow_eaters,
                     pose_player_model,
                 )
                     .chain()
@@ -108,6 +118,21 @@ impl Plugin for PlayerPlugin {
                     .before(PlayerSystems::Move)
                     .run_if(in_state(AppState::InGame)),
             )
+            // The enemies hold and release the player while they move, as
+            // they hurt it. Holds are applied once every enemy, on a spline
+            // or not, has moved, so that the whole tick sees one state, and
+            // before the hurts, so that a hold that comes with a fatal hurt
+            // (the mosquito's sting) ends in death, as in the original.
+            .configure_sets(
+                FixedUpdate,
+                PlayerSystems::Hold
+                    .after(PlayerSystems::Move)
+                    .after(EnemySystems::Killed)
+                    .after(SplineSystems::Move)
+                    .before(PlayerSystems::Hurt)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(FixedUpdate, held::apply_holds.in_set(PlayerSystems::Hold))
             // The original's objects hurt the player while they move, after
             // the player's own move; applying their hurts together once all
             // have moved keeps them within the same tick.
@@ -120,9 +145,12 @@ impl Plugin for PlayerPlugin {
                     .before(PlayerSystems::Respawn)
                     .run_if(in_state(AppState::InGame)),
             )
+            // Posed again after a respawn, so that a bug that was in a
+            // mouth isn't drawn there for a frame.
             .add_systems(
                 FixedUpdate,
-                respawn_dead_players
+                (respawn_dead_players, pose_player_model)
+                    .chain()
                     .in_set(PlayerSystems::Respawn)
                     .after(PlayerSystems::Move)
                     .run_if(in_state(AppState::InGame)),
@@ -141,6 +169,9 @@ pub enum PlayerSystems {
     Kick,
     /// Moves the player each fixed tick.
     Move,
+    /// Applies the holds and releases enemies sent this tick
+    /// ([`HoldPlayer`], [`ReleasePlayer`]), once everything has moved.
+    Hold,
     /// Applies the hurts other objects sent this tick, once everything has
     /// moved.
     Hurt,
@@ -401,24 +432,38 @@ fn respawn_dead_players(
         // Sound: stop EFFECT_SHIELD.
         // The original leaves the liquid flag for the next collision check
         // to clear; clearing it now only differs for that one tick.
+        // `ResetPlayer` makes the player collidable again, and it is no
+        // longer in any enemy's hold.
         commands
             .entity(player.entity)
-            .remove::<(Dying, Torched, crate::liquids::Underwater)>();
+            .remove::<(
+                Dying,
+                Torched,
+                crate::liquids::Underwater,
+                EatenBy,
+                CarriedBy,
+            )>()
+            .insert(player_layers(true));
         respawned.write(PlayerRespawned(player.entity));
     }
 }
 
 /// Places the player's model: the bug stands on the player's origin; the
-/// ball's frozen roll-up pose sits below its centre and rolls about it.
+/// ball's frozen roll-up pose sits below its centre and rolls about it. An
+/// eaten bug's model is in its eater's mouth instead
+/// ([`held::follow_eaters`]).
 ///
 /// Port of the ball's transform in `UpdatePlayer_Ball`
 /// (original/src/Player/Player_Ball.c), whose mesh `InitPlayer_Ball` moves
 /// down by `PLAYER_BALL_FOOTOFFSET` and which turns about x, then y.
 fn pose_player_model(
-    players: Query<(&PlayerForm, &BallSpin, &PlayerModel)>,
+    players: Query<(&PlayerForm, &BugState, &BallSpin, &PlayerModel)>,
     mut models: Query<&mut Transform, Without<PlayerForm>>,
 ) {
-    for (form, spin, model) in &players {
+    for (form, state, spin, model) in &players {
+        if *form == PlayerForm::Bug && *state == BugState::BeingEaten {
+            continue;
+        }
         let Ok(mut transform) = models.get_mut(model.0) else {
             continue;
         };
