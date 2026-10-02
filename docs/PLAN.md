@@ -8,8 +8,9 @@ the game data.
 ## Goals
 
 1. **Faithful gameplay**: movement, collision, enemy AI, timings and level
-   content should feel like the original. Behaviour is checked against the
-   reference C build running side by side.
+   content should feel like the original. Behaviour is ported from the C
+   source and checked against the original game (see *Comparing against
+   the original*).
 2. **Reasonably faithful look**: vertex colours, fog, environment maps and
    the overall palette should match. Pixel-exact fog blending and filtering
    are not goals.
@@ -84,11 +85,30 @@ docs/                this plan, architecture notes, format notes
 - **Ported systems cite their source.** Each ported system names the C file
   and function it replaces, so behaviour can be checked against the reference.
 
+## Comparing against the original
+
+The original game is not built as part of this project.
+
+- **Porting**: the C source in `original/src` is the primary reference.
+  Agents read it directly; no build is needed.
+- **Feel and look**: at each milestone, the project owner plays the
+  official upstream release (from the GitHub releases page of
+  `jorio/Bugdom`) against the port, following a short checklist of
+  measurable comparisons supplied with the milestone (jump height, run
+  speed, camera behaviour, enemy timings).
+- **Parser accuracy**: parsers are tested on the structure of the real data
+  and checked visually in the model viewer. If a format turns out to be
+  ambiguous, we build a small headless tool from the original loaders
+  (`File.c`, `3DMF.c`, Pomme) that dumps parsed data as JSON, and compare
+  the Rust parsers against its output. Decided per format in Phase 1.
+- **Not planned**: frame-by-frame gameplay traces. The fixed timestep means
+  they would not match the original's variable timestep anyway.
+
 ## Phases
 
 ### Phase 0: Foundations
 - [x] Repository restructure: upstream as the `original/` submodule (pinned to `7d7ad99`); README and this plan
-- [ ] Build the reference C game from `original/` (CMake + SDL3) for side-by-side comparison
+- [x] Decide how to compare with the original (see *Comparing against the original*; no reference build)
 - [x] Cargo workspace skeleton (BevyFlock-style lints, features and build profiles)
 - [x] Cloud session start hook (submodule, Linux dependencies, warm build cache)
 - [x] CI (fmt, clippy, docs, tests for non-Bevy crates; no full Bevy build)
@@ -100,6 +120,7 @@ docs/                this plan, architecture notes, format notes
 - [ ] Terrain (`.ter.rsrc`) → heightmap, tile map, item list, splines, fences
 - [ ] Sound banks (`.sounds`), AIFF music, TGA images
 - [ ] Bevy asset loaders
+- [ ] (If needed) headless data-dump tool built from the original loaders, for comparing parser output
 - **Milestone:** model and skeleton viewer (equivalent of `ModelDebug.c`)
 
 ### Phase 2: Engine core (main session, because it defines the shared component vocabulary)
