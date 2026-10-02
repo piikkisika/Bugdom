@@ -123,7 +123,8 @@ use crate::state::{AppState, LevelAssets};
 use crate::terrain::TerrainMap;
 
 // One module per enemy kind (`crawling` is shared by the slug and the
-// caterpillar). The ant joins when its package merges.
+// caterpillar).
+pub mod ant;
 pub mod boxerfly;
 pub mod caterpillar;
 pub mod crawling;
@@ -175,6 +176,7 @@ impl Plugin for EnemiesPlugin {
         // The enemy kinds' plugins, one line each, in two tuples (Bevy takes
         // at most 15 plugins per tuple).
         app.add_plugins((
+            ant::AntPlugin,
             boxerfly::BoxerFlyPlugin,
             caterpillar::CaterpillarPlugin,
             fire_ant::FireAntPlugin,
