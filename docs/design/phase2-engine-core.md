@@ -1,8 +1,7 @@
 # Phase 2 design: engine core
 
-Status: **proposal, awaiting review.** Phase 2 defines the shared component
-vocabulary, so the decisions marked **[review]** need the owner's approval
-before code depends on them.
+Status: **approved** (2026-10-02), with the changes recorded below. The
+terrain texture filtering in §3 is still open.
 
 Milestone: the player can walk, jump, roll and swim in the Lawn level, and it
 feels the same as the reference.
@@ -60,7 +59,18 @@ InGame sub-state (GameplayState): Playing | Paused | Dying
 - **Texture array:** one layer per 32×32 tile image, with mipmaps generated
   on the CPU and linear filtering. Tile flip and rotate flags become
   per-vertex UVs, so each tile has its own four vertices (no shared vertices
-  across tiles). Seams cannot appear because no tile samples its neighbour.
+  across tiles). Within a tile, filtering is smooth. Across tile edges it is
+  not: each tile samples only its own texels, so the edge between two tiles
+  is a hard half-texel step. No colour bleeds in from unrelated tiles, but it
+  is not seamless either.
+- **Open: filtering across tile edges.** The original filters smoothly but
+  shows seams. The fix is a post-import step that bakes every chunk's tiles
+  into one texture with a one-tile border copied from its neighbours. That is
+  what the original's `SUPERTILE_DETAIL_SEAMLESS` mode does for each
+  supertile, extended so that neighbouring chunks agree. The baked chunk
+  textures go into an array, one layer per chunk. Decided later; the
+  per-tile array comes first, and the chunk mesh and material only change in
+  how they compute UVs.
 - **`TerrainMaterial`**, a custom `Material`: texture array × vertex colour,
   unlit, with Bevy's distance fog. This matches the original, which pre-lights
   terrain on the CPU: `BuildTerrainSuperTile` multiplies the map's vertex
@@ -150,17 +160,30 @@ Player-specific state:
   `PLAYER_BUG_FRICTION_ACCEL`, jump force, max speeds, gravity) as one asset
   or resource with units, to make the game moddable.
 
-**Bug behaviour follows its animation, as in the original.** `MovePlayer_Bug`
-picks its behaviour from the current animation number. We keep that, so
-behaviour and animation can't disagree. A `BugAnim` enum names the animation
-numbers. One `move_bug` system matches on it and calls one small function per
-mode (`stand`, `walk`, `jump`, …), and each function cites its C original.
+**One bug state drives both movement and animation.** `MovePlayer_Bug` picks
+its behaviour from the current animation number. We keep a single source of
+truth too, but make it explicit: a `BugState` component (a plain enum: `Stand`,
+`Walk`, `Jump`, …) is what the movement code reads and writes.
+
+- **Movement:** one `move_bug` system matches on `BugState` and calls one small
+  function per state, each citing its C original. It never touches the
+  animator. It may read the animator's state (an animation has stopped, a flag
+  such as the kick frame), as the original does.
+- **Animation:** a separate system notices when `BugState` changes and starts
+  the matching animation. It holds the animation numbers and the
+  per-transition morph rates, taken from the original's `MorphToSkeletonAnim`
+  calls.
+- **Data:** the enum variants carry no data. Per-state data (the walk
+  animation's speed, the kick-aim target) lives in its own components.
 
 ## 6. Input and camera
 
 - **Input is sampled in `PreUpdate` and consumed in `FixedUpdate`.** Mouse
   motion is summed between ticks. Key presses (`GetNewKeyState`) are latched
   until a fixed tick reads them, so a jump pressed between ticks isn't lost.
+- **Debug fly camera** for the early steps, modelled on Bevy's
+  `bevy_camera_controller` free camera (`free_camera.rs`) but written as our
+  own small system, so it needs no feature flag and we can change it.
 - Controls, as in the original's port:
   - The mouse drives the bug, as camera-relative acceleration.
   - Keys and gamepad stand in for the mouse (`GetMouseDelta`).
@@ -212,7 +235,8 @@ mode (`stand`, `walk`, `jump`, …), and each function cites its C original.
    interpolation.
 5. The collision framework, terrain item streaming, Lawn's scenery items
    (rocks, flowers, wall ends, door, log), fences and checkpoints.
-6. Ball form (roll-up, unroll, ball physics) and swimming: water patches,
-   pulled forward from Phase 3's liquids because the milestone needs them.
+6. Ball form (roll-up, unroll, ball physics). Swimming and water patches stay
+   with the liquids in Phase 3; the Phase 2 milestone checks swimming once
+   they exist.
 7. The milestone checklist (jump height, run speed, camera behaviour) for the
    owner to compare against the original.
