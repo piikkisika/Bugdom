@@ -122,6 +122,8 @@ The original game is not built as part of this project.
 - [x] Bevy asset loaders
 - [ ] (If needed) headless data-dump tool built from the original loaders, for comparing parser output
 - **Milestone:** model and skeleton viewer (equivalent of `ModelDebug.c`)
+- [ ] **Pending review:** go through [`docs/checklists/phase1-viewer.md`](checklists/phase1-viewer.md)
+  together (owner plays the original, Claude fixes differences) before Phase 1 is closed
 
 ### Phase 2: Engine core (main session, because it defines the shared component vocabulary)
 - [ ] Game states and the screen flow
