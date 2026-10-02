@@ -16,6 +16,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 
 use super::bug::BugState;
+use super::effects::{NitroTrail, PlayerEffects};
 use super::health::{DeferredKnock, kill_player, knock_on_butt};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem, PlayerMessages};
 use super::{Player, PlayerForm, PlayerTuning};
@@ -151,19 +152,23 @@ struct Ball<'a> {
     ball_time: f32,
     /// The ball ran out of time and turns back into the bug.
     unrolled: bool,
+    /// A boost started this tick.
+    boost_started: bool,
+    /// The boost leaves its trail this tick.
+    leaves_trail: bool,
 }
 
 /// Moves the player's ball for one tick.
 ///
-/// Port of `MovePlayer_Ball` (original/src/Player/Player_Ball.c). The nitro
-/// trail's particles arrive with the particle effects.
+/// Port of `MovePlayer_Ball` (original/src/Player/Player_Ball.c).
 pub fn move_ball(
     mut commands: Commands,
     context: MotionContext,
     mut messages: PlayerMessages,
-    mut players: Query<PlayerData, With<Player>>,
+    mut effects: PlayerEffects,
+    mut players: Query<(PlayerData, &mut NitroTrail), With<Player>>,
 ) {
-    for mut player in &mut players {
+    for (mut player, mut trail) in &mut players {
         if *player.form != PlayerForm::Ball {
             continue;
         }
@@ -173,14 +178,28 @@ pub fn move_ball(
             nitro: **player.nitro,
             ball_time: **player.ball_time,
             unrolled: false,
+            boost_started: false,
+            leaves_trail: false,
         };
         ball.tick();
+
+        if ball.boost_started {
+            trail.start();
+        }
+        if ball.leaves_trail {
+            let m = &ball.motion;
+            effects.nitro_trail(&mut trail, m.old_coord, m.coord, m.dt);
+        }
+        if ball.nitro <= 0.0 {
+            trail.end();
+        }
 
         let (spin, nitro, unrolled) = (ball.spin, ball.nitro, ball.unrolled);
         let swimming = ball.motion.form == PlayerForm::Bug;
         let (knocked, died) = (ball.motion.knocked, ball.motion.died);
         player.ball_time.set_if_neq(BallTime(ball.ball_time));
-        ball.motion.store(&mut player, &mut commands, &mut messages);
+        ball.motion
+            .store(&mut player, &mut commands, &mut messages, &mut effects);
         player.spin.set_if_neq(spin);
         player.nitro.set_if_neq(Nitro(nitro));
         if swimming {
@@ -218,7 +237,10 @@ impl Ball<'_> {
         if drained > 0.0 {
             self.lose_ball_time(drained);
         }
+        // `LeaveNitroTrail`, which the original skips if the move killed
+        // the ball.
         if self.nitro > 0.0 {
+            self.leaves_trail = !self.motion.died;
             self.nitro = (self.nitro - self.motion.dt).max(0.0);
         }
         self.update();
@@ -257,6 +279,7 @@ impl Ball<'_> {
             m.velocity.x *= tuning.nitro_boost;
             m.velocity.z *= tuning.nitro_boost;
             self.nitro = tuning.nitro_duration;
+            self.boost_started = true;
             // Not through `lose_ball_time`: a boost alone never unrolls the
             // ball, though the timer's drain right after can.
             self.ball_time -= tuning.nitro_ball_time;
@@ -334,6 +357,8 @@ mod tests {
             nitro: 0.0,
             ball_time,
             unrolled: false,
+            boost_started: false,
+            leaves_trail: false,
         };
         for tick in 0..ticks {
             if tick > 0 {
@@ -386,6 +411,8 @@ mod tests {
             nitro: 0.0,
             ball_time: 1.0,
             unrolled: false,
+            boost_started: false,
+            leaves_trail: false,
         };
         for _ in 0..5 {
             ball.tick();
@@ -500,6 +527,8 @@ mod tests {
             nitro: 0.0,
             ball_time: 1.0,
             unrolled: false,
+            boost_started: false,
+            leaves_trail: false,
         };
         ball.tick();
         assert_eq!(ball.motion.form, PlayerForm::Bug);

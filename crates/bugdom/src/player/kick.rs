@@ -24,7 +24,7 @@ use crate::splines::OnSpline;
 /// (`KickNow`, `Flag[0]`).
 pub const KICK_NOW_FLAG: usize = 0;
 /// The bug's pelvis joint (`BUG_LIMB_NUM_PELVIS`).
-const PELVIS_JOINT: usize = 0;
+pub(super) const PELVIS_JOINT: usize = 0;
 /// Where the kick lands, in the pelvis joint's space (`offsetCoord`).
 const KICK_OFFSET: Vec3 = Vec3::new(0.0, -10.0, -50.0);
 /// Half the size of the cube the kick hits around that point, in units.

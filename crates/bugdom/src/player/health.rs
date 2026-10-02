@@ -52,9 +52,9 @@ pub struct ShieldTimer(pub f32);
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct DeferredKnock(pub Vec3);
 
-/// The player has been set on fire (`gTorchPlayer`). The flames and the
-/// damage they do arrive with the torch effect; dying or starting the level
-/// puts the fire out.
+/// The player has been set on fire (`gTorchPlayer`). As in the original,
+/// the flames only show while the bug drowns (`TorchPlayer` in `move_bug`);
+/// starting again puts the fire out.
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Torched;
 
