@@ -69,6 +69,9 @@ pub struct HurtPlayer {
     pub invincible_for: f32,
     /// Hurt even through the shield (`overrideShield`).
     pub override_shield: bool,
+    /// Set the player on fire if the hurt kills it (a
+    /// `PARTICLE_FLAGS_HURTPLAYERBAD` particle's `gTorchPlayer`).
+    pub torch_if_killed: bool,
 }
 
 impl HurtPlayer {
@@ -82,6 +85,7 @@ impl HurtPlayer {
             knock: true,
             invincible_for: INVINCIBILITY_DURATION,
             override_shield: false,
+            torch_if_killed: false,
         }
     }
 }
@@ -167,6 +171,9 @@ pub(super) fn hurt_players(
             HurtOutcome::Killed => {
                 kill_player(&mut player, &mut commands, tuning.kill_delay);
                 killed.insert(player.entity);
+                if hurt.torch_if_killed {
+                    commands.entity(player.entity).insert(Torched);
+                }
             }
             HurtOutcome::Hurt => {
                 if hurt.knock {

@@ -14,11 +14,14 @@ use bevy::transform::TransformSystems;
 pub use particles::{
     FULL_ALPHA, HIT_MIN_ALPHA, HIT_OBJECT_REACH, HURT_PLAYER_REACH, MAX_PARTICLE_GROUPS,
     MAX_PARTICLES, Particle, ParticleFlags, ParticleGroup, ParticleGroupDesc, ParticleGroupId,
-    ParticleGroups, ParticleKind, ParticleTexture, particle_hit,
+    ParticleGroups, ParticleKind, ParticleTexture, ParticleTouch, particle_hit,
 };
 pub use ripple::{Ripple, RippleMaker, make_ripple};
 
+use crate::collision::CollisionBoxes;
 use crate::math::GameRandom;
+use crate::player::{HurtPlayer, Player, PlayerForm, PlayerSystems};
+use crate::splines::SplineSystems;
 use crate::state::AppState;
 use crate::terrain::TerrainMap;
 
@@ -32,7 +35,13 @@ impl Plugin for EffectsPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    move_particle_groups.in_set(EffectsSystems::MoveParticles),
+                    // After the objects and the spline objects have moved
+                    // (`MoveObjects`, `MoveSplineObjects`).
+                    move_particle_groups
+                        .in_set(EffectsSystems::MoveParticles)
+                        .after(PlayerSystems::Move)
+                        .after(SplineSystems::Move)
+                        .before(PlayerSystems::Hurt),
                     ripple::move_ripples,
                 )
                     .run_if(in_state(AppState::InGame)),
@@ -54,13 +63,60 @@ pub enum EffectsSystems {
     MoveParticles,
 }
 
-/// Port of `MoveParticleGroups`.
+/// What a hurting particle does to the player it touches
+/// (`MoveParticleGroups`).
+const PARTICLE_DAMAGE: f32 = 0.15;
+const PARTICLE_DAMAGE_BALL: f32 = 0.1;
+/// Seconds of invincibility a particle's hurt gives.
+const PARTICLE_INVINCIBILITY: f32 = 1.2;
+/// A [`ParticleFlags::HURT_PLAYER_BAD`] particle hurts enough to kill.
+const BAD_PARTICLE_DAMAGE: f32 = 1.0;
+const BAD_PARTICLE_INVINCIBILITY: f32 = 0.5;
+
+/// Port of `MoveParticleGroups`, including its player check: each touching
+/// particle hurts the player, without a knock. The hurts are applied with
+/// the other objects' hurts in [`PlayerSystems::Hurt`], still within this
+/// tick.
 fn move_particle_groups(
     time: Res<Time>,
     terrain: Option<Res<TerrainMap>>,
     mut groups: ResMut<ParticleGroups>,
+    players: Query<(Entity, &Transform, &CollisionBoxes, &PlayerForm), With<Player>>,
+    mut hurts: MessageWriter<HurtPlayer>,
 ) {
-    groups.step(time.delta_secs(), terrain.as_deref());
+    let targets: Vec<_> = players
+        .iter()
+        .map(|(entity, transform, boxes, _)| {
+            let world = boxes.0.iter().map(|b| b.at(transform.translation));
+            (entity, world.collect())
+        })
+        .collect();
+    let touches = groups.step(time.delta_secs(), terrain.as_deref(), &targets);
+    for touch in touches {
+        let Ok((.., form)) = players.get(touch.player) else {
+            continue;
+        };
+        let hurt = if touch.flags.contains(ParticleFlags::HURT_PLAYER_BAD) {
+            HurtPlayer {
+                knock: false,
+                invincible_for: BAD_PARTICLE_INVINCIBILITY,
+                torch_if_killed: true,
+                ..HurtPlayer::new(touch.player, None, BAD_PARTICLE_DAMAGE)
+            }
+        } else {
+            let damage = if *form == PlayerForm::Ball {
+                PARTICLE_DAMAGE_BALL
+            } else {
+                PARTICLE_DAMAGE
+            };
+            HurtPlayer {
+                knock: false,
+                invincible_for: PARTICLE_INVINCIBILITY,
+                ..HurtPlayer::new(touch.player, None, damage)
+            }
+        };
+        hurts.write(hurt);
+    }
 }
 
 /// Port of `DeleteAllParticleGroups` as `CleanupLevel` calls it.

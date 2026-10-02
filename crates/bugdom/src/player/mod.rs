@@ -77,7 +77,6 @@ impl Plugin for PlayerPlugin {
                     health::count_down_invincibility,
                     bug::move_bug,
                     ball::move_ball,
-                    health::hurt_players,
                     health::count_down_shield,
                     animation::animate_bug,
                     pose_player_model,
@@ -86,6 +85,17 @@ impl Plugin for PlayerPlugin {
                     .in_set(PlayerSystems::Move)
                     .after(SkeletonSystems::Advance)
                     .after(CollisionSystems::Gather)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            // The original's objects hurt the player while they move, after
+            // the player's own move; applying their hurts together once all
+            // have moved keeps them within the same tick.
+            .add_systems(
+                FixedUpdate,
+                health::hurt_players
+                    .in_set(PlayerSystems::Hurt)
+                    .after(PlayerSystems::Move)
+                    .before(PlayerSystems::Respawn)
                     .run_if(in_state(AppState::InGame)),
             )
             .add_systems(
@@ -106,6 +116,9 @@ pub enum PlayerSystems {
     Morph,
     /// Moves the player each fixed tick.
     Move,
+    /// Applies the hurts other objects sent this tick, once everything has
+    /// moved.
+    Hurt,
     /// Starts killed players again once their kill delay is over.
     Respawn,
 }

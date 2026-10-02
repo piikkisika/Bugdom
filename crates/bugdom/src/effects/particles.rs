@@ -46,6 +46,14 @@ pub enum ParticleKind {
     Gravitoids,
 }
 
+/// A hurting particle touched a player this step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParticleTouch {
+    pub player: Entity,
+    /// The flags of the particle's group.
+    pub flags: ParticleFlags,
+}
+
 /// What a group's particles do besides moving (`PARTICLE_FLAGS_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ParticleFlags(pub u8);
@@ -300,7 +308,17 @@ impl ParticleGroups {
     ///
     /// Port of `MoveParticleGroups`, in per-second units. Player damage
     /// is not done here; see [`Self::particle_hits_box`].
-    pub fn step(&mut self, dt: f32, terrain: Option<&TerrainMap>) {
+    ///
+    /// Returns which players a [`ParticleFlags::HURT_PLAYER`] particle
+    /// touched, once per touching particle as in the original. `players`
+    /// are the players' collision boxes in world space.
+    pub fn step(
+        &mut self,
+        dt: f32,
+        terrain: Option<&TerrainMap>,
+        players: &[(Entity, Vec<CollisionBox>)],
+    ) -> Vec<ParticleTouch> {
+        let mut touches = Vec::new();
         for slot in &mut self.slots {
             let Some(group) = slot.group.as_mut() else {
                 continue;
@@ -309,8 +327,9 @@ impl ParticleGroups {
                 slot.group = None;
                 continue;
             }
-            step_group(group, dt, terrain);
+            step_group(group, dt, terrain, players, &mut touches);
         }
+        touches
     }
 
     /// The flags of the first group that has `flags` (any of them; all
@@ -371,7 +390,13 @@ pub fn particle_hit(
     })
 }
 
-fn step_group(group: &mut ParticleGroup, dt: f32, terrain: Option<&TerrainMap>) {
+fn step_group(
+    group: &mut ParticleGroup,
+    dt: f32,
+    terrain: Option<&TerrainMap>,
+    players: &[(Entity, Vec<CollisionBox>)],
+    touches: &mut Vec<ParticleTouch>,
+) {
     let desc = group.desc;
     let particles = &mut group.particles;
     let count = particles.len();
@@ -440,13 +465,19 @@ fn step_group(group: &mut ParticleGroup, dt: f32, terrain: Option<&TerrainMap>) 
                 }
             }
 
-            // HURT_PLAYER: the original hurts the player here, once per
-            // touching particle per frame (`PlayerGotHurt` with 0.15, 0.1 as
-            // the ball, or a kill and `gTorchPlayer` with HURT_PLAYER_BAD).
-            // Player damage lives with the player: it calls
-            // `ParticleGroups::particle_hits_box(player_box,
-            // ParticleFlags::HURT_PLAYER, HURT_PLAYER_REACH, 0.0)` after
-            // `EffectsSystems::MoveParticles`.
+            // Checked here, before the particle shrinks or fades away this
+            // step, as in the original (`DoSimpleBoxCollisionAgainstPlayer`).
+            if desc.flags.contains(ParticleFlags::HURT_PLAYER) {
+                let reach = particle_box(particle.position, HURT_PLAYER_REACH);
+                for (player, boxes) in players {
+                    if boxes.iter().any(|b| b.overlaps(&reach)) {
+                        touches.push(ParticleTouch {
+                            player: *player,
+                            flags: desc.flags,
+                        });
+                    }
+                }
+            }
 
             if map.ceiling.is_some()
                 && desc.flags.contains(ParticleFlags::ROOF)
@@ -513,12 +544,39 @@ mod tests {
     }
 
     #[test]
+    fn hurting_particles_touch_players_even_as_they_fade_out() {
+        let map = TerrainMap::load_for_tests("Lawn", false);
+        let at = Vec3::new(2000.0, map.floor_height(2000.0, 2000.0) + 50.0, 2000.0);
+        let player = Entity::from_raw_u32(3).unwrap();
+        let near = vec![CollisionBox::new(40.0, -40.0, -40.0, 40.0, 40.0, -40.0).at(at)];
+        let far = vec![near[0].at(Vec3::X * 1000.0)];
+        let mut groups = ParticleGroups::default();
+        // The particle fades out completely in this one step.
+        let id = groups
+            .new_group(ParticleGroupDesc {
+                flags: ParticleFlags::HURT_PLAYER,
+                ..sparks(0.0, 0.0, 100.0)
+            })
+            .unwrap();
+        assert!(!groups.add_particle(id, at, Vec3::ZERO, 1.0, 1.0));
+        let touches = groups.step(1.0 / 60.0, Some(&map), &[(player, near), (player, far)]);
+        assert_eq!(
+            touches,
+            [ParticleTouch {
+                player,
+                flags: ParticleFlags::HURT_PLAYER
+            }]
+        );
+        assert!(groups.get(id).unwrap().particles().is_empty());
+    }
+
+    #[test]
     fn gravity_accelerates_in_units_per_second() {
         let mut groups = ParticleGroups::default();
         let id = groups.new_group(sparks(800.0, 0.0, 0.0)).unwrap();
         assert!(!groups.add_particle(id, Vec3::ZERO, Vec3::new(100.0, 0.0, 0.0), 1.0, 1.0));
         for _ in 0..60 {
-            groups.step(1.0 / 60.0, None);
+            groups.step(1.0 / 60.0, None, &[]);
         }
         let p = groups.get(id).unwrap().particles()[0];
         assert!((p.velocity.y + 800.0).abs() < 1e-2, "{:?}", p.velocity);
@@ -537,18 +595,18 @@ mod tests {
         groups.add_particle(shrink, Vec3::ZERO, Vec3::ZERO, 2.0, 1.0);
         groups.add_particle(fade, Vec3::ZERO, Vec3::ZERO, 1.0, 1.0);
 
-        groups.step(0.25, None);
+        groups.step(0.25, None, &[]);
         assert_eq!(groups.get(shrink).unwrap().particles().len(), 2);
         assert!((groups.get(fade).unwrap().particles()[0].alpha - 0.5).abs() < 1e-6);
 
-        groups.step(0.25, None);
+        groups.step(0.25, None, &[]);
         let left = groups.get(shrink).unwrap().particles();
         assert_eq!(left.len(), 1);
         assert!((left[0].scale - 1.5).abs() < 1e-6);
         // Faded out, but the group lives until the step after it empties.
         assert!(groups.get(fade).unwrap().particles().is_empty());
 
-        groups.step(0.25, None);
+        groups.step(0.25, None, &[]);
         assert!(!groups.is_valid(fade));
         assert!(groups.is_valid(shrink));
     }
@@ -558,7 +616,7 @@ mod tests {
         let mut groups = ParticleGroups::default();
         let old = groups.new_group(sparks(0.0, 0.0, 0.0)).unwrap();
         // Empty, so the next step frees it.
-        groups.step(0.1, None);
+        groups.step(0.1, None, &[]);
         assert!(!groups.is_valid(old));
         assert!(groups.add_particle(old, Vec3::ZERO, Vec3::ZERO, 1.0, 1.0));
 
@@ -606,7 +664,7 @@ mod tests {
         groups.add_particle(near, Vec3::new(1.0, 0.0, 0.0), Vec3::ZERO, 1.0, 1.0);
 
         let dt = 0.01;
-        groups.step(dt, None);
+        groups.step(dt, None, &[]);
         let far = groups.get(far).unwrap().particles();
         // 1000 / 100² per second toward each other.
         assert!((far[0].velocity.x - 0.1 * dt).abs() < 1e-6, "{:?}", far[0]);
@@ -639,7 +697,7 @@ mod tests {
             1.0,
             1.0,
         );
-        groups.step(1.0 / 30.0, Some(&map));
+        groups.step(1.0 / 30.0, Some(&map), &[]);
         let p = groups.get(id).unwrap().particles()[0];
         assert_eq!(p.position.y, floor + BOUNCE_FLOOR_CLEARANCE);
         assert!(p.velocity.y > 0.0);
