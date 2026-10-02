@@ -533,6 +533,30 @@ mod tests {
     }
 
     #[test]
+    fn a_forgotten_item_stays_in_use() {
+        let item = Item {
+            x: 0,
+            z: 0,
+            kind: 0,
+            params: [0; 4],
+            flags: 0,
+        };
+        let mut world = World::new();
+        world.add_observer(release_item);
+        let mut items = TerrainItems::new(vec![item; 2]);
+        items.in_use = vec![true, true];
+        world.insert_resource(items);
+        let kept = world.spawn(TerrainItemSource(0)).id();
+        let freed = world.spawn(TerrainItemSource(1)).id();
+        forget_terrain_item(&mut world.commands().entity(kept));
+        world.flush();
+        assert!(!world.entity(kept).contains::<TerrainItemSource>());
+        world.despawn(kept);
+        world.despawn(freed);
+        assert_eq!(world.resource::<TerrainItems>().in_use, [true, false]);
+    }
+
+    #[test]
     fn priming_scans_the_whole_add_window() {
         let mut window = window();
         let (col, row) = (window.col, window.row);

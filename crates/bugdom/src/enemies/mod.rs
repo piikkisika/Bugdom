@@ -89,6 +89,8 @@
 //! [`EnemySystems::Move`] does). Despawning the root deletes the enemy
 //! (`DeleteEnemy`): its shadow and model go with it and the counts drop.
 
+pub mod larva;
+
 use avian3d::prelude::{ColliderDisabled, CollisionLayers, LayerMask, TransformInterpolation};
 use bevy::ecs::entity::EntityHashSet;
 use bevy::ecs::query::QueryData;
@@ -109,6 +111,10 @@ use crate::effects::{EffectsSystems, ParticleFlags, ParticleGroups, particle_hit
 use crate::fences::Fences;
 use crate::items::{DespawnOutOfRange, TerrainItemSource};
 use crate::liquids::{Liquid, LiquidKind, Underwater};
+use bevy::camera::primitives::Frustum;
+use bevy::math::primitives::ViewFrustum;
+
+use crate::camera::GameCamera;
 use crate::math::quick_distance;
 use crate::objects::{ModelSpawner, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
@@ -151,7 +157,7 @@ impl Plugin for EnemiesPlugin {
             )
             .add_systems(FixedUpdate, apply_enemy_hurts.in_set(EnemySystems::Hurt));
         // The enemy kinds' plugins, one line each (at most 15 per tuple).
-        app.add_plugins((boxerfly::BoxerFlyPlugin,));
+        app.add_plugins((boxerfly::BoxerFlyPlugin, larva::LarvaPlugin));
     }
 }
 
@@ -1013,6 +1019,51 @@ impl EnemyCollision<'_, '_> {
     }
 }
 
+/// The player an enemy goes for: the nearest one in x and z, by
+/// `CalcQuickDistance` (`gMyCoord`, with one player).
+pub fn nearest_player(from: Vec3, players: impl IntoIterator<Item = Vec3>) -> Option<Vec3> {
+    players.into_iter().min_by(|a, b| {
+        quick_distance(from.xz(), a.xz()).total_cmp(&quick_distance(from.xz(), b.xz()))
+    })
+}
+
+/// Whether a sphere is on the visible side of a camera's left, right,
+/// near and far planes. Port of `IsSphereInFrustum_XZ`
+/// (original/src/QD3D/FrustumCulling.c), which ignores the top and bottom.
+pub fn sphere_in_view_xz(frustum: &ViewFrustum, center: Vec3, radius: f32) -> bool {
+    const LEFT: usize = 0;
+    const RIGHT: usize = 1;
+    let center = center.extend(1.0);
+    [
+        LEFT,
+        RIGHT,
+        ViewFrustum::NEAR_PLANE_IDX,
+        ViewFrustum::FAR_PLANE_IDX,
+    ]
+    .into_iter()
+    .all(|plane| frustum.half_spaces[plane].normal_d().dot(center) + radius > 0.0)
+}
+
+/// Whether enemies are out of view, for the dying enemies that vanish once
+/// the camera no longer sees them (`STATUS_BIT_ISCULLED`, set by
+/// `CullTestAllObjects`).
+#[derive(SystemParam)]
+pub struct EnemyCulling<'w, 's> {
+    cameras: Query<'w, 's, &'static Frustum, With<GameCamera>>,
+}
+
+impl EnemyCulling<'_, '_> {
+    /// Whether no game camera sees the sphere. Without a camera, everything
+    /// is culled. The original tests the bounding sphere's own centre;
+    /// this tests the enemy's origin.
+    pub fn is_culled(&self, center: Vec3, radius: f32) -> bool {
+        !self
+            .cameras
+            .iter()
+            .any(|frustum| sphere_in_view_xz(frustum, center, radius))
+    }
+}
+
 /// The enemy nearest to `point` in x and z (by `CalcQuickDistance`) among
 /// `candidates` (entity, position, collision kinds), and its distance.
 /// Only objects whose kinds include [`CollisionKind::Enemy`] count, so a
@@ -1313,6 +1364,40 @@ mod tests {
             velocity: Vec3::ZERO,
             trigger: None,
         }
+    }
+
+    #[test]
+    fn the_nearest_player_in_x_and_z_is_targeted() {
+        let players = [Vec3::new(500.0, 0.0, 0.0), Vec3::new(0.0, 900.0, -200.0)];
+        assert_eq!(nearest_player(Vec3::ZERO, players), Some(players[1]));
+        assert_eq!(nearest_player(Vec3::ZERO, []), None);
+    }
+
+    #[test]
+    fn culling_ignores_the_top_and_bottom_planes() {
+        use bevy::math::primitives::HalfSpace;
+        // A box from -100 to 100 in x, y and -z, seen down -z.
+        let plane = |n: Vec3, d: f32| HalfSpace::new(n.extend(d));
+        let frustum = ViewFrustum {
+            half_spaces: [
+                plane(Vec3::X, 100.0),
+                plane(Vec3::NEG_X, 100.0),
+                plane(Vec3::Y, 100.0),
+                plane(Vec3::NEG_Y, 100.0),
+                plane(Vec3::NEG_Z, 0.0),
+                plane(Vec3::Z, 100.0),
+            ],
+        };
+        let seen = |at: Vec3| sphere_in_view_xz(&frustum, at, 10.0);
+        assert!(seen(Vec3::new(0.0, 0.0, -50.0)));
+        // Above the top plane, but that one isn't tested.
+        assert!(seen(Vec3::new(0.0, 500.0, -50.0)));
+        // Off to the side, behind, or beyond the far plane.
+        assert!(!seen(Vec3::new(500.0, 0.0, -50.0)));
+        assert!(!seen(Vec3::new(0.0, 0.0, 50.0)));
+        assert!(!seen(Vec3::new(0.0, 0.0, -500.0)));
+        // A sphere reaching back into view is seen.
+        assert!(seen(Vec3::new(105.0, 0.0, -50.0)));
     }
 
     #[test]

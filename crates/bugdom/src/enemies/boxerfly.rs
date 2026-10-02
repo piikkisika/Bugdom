@@ -7,18 +7,15 @@
 
 use std::f32::consts::FRAC_PI_3;
 
-use bevy::camera::primitives::Frustum;
 use bevy::math::Affine3A;
-use bevy::math::primitives::ViewFrustum;
 use bevy::prelude::*;
 
 use super::{
-    BallHitEnemy, ENEMY_GRAVITY, EnemyBody, EnemyCollision, EnemyKicked, EnemyKilled, EnemyKind,
-    EnemyModel, EnemySkeleton, EnemySpawner, EnemySystems, HomePosition, KICK_SPEED,
+    BallHitEnemy, ENEMY_GRAVITY, EnemyBody, EnemyCollision, EnemyCulling, EnemyKicked, EnemyKilled,
+    EnemyKind, EnemyModel, EnemySkeleton, EnemySpawner, EnemySystems, HomePosition, KICK_SPEED,
     apply_friction, death_enemy_collision_mask, default_enemy_collision_mask,
-    detach_enemy_from_spline, move_enemy, per_frame_friction,
+    detach_enemy_from_spline, move_enemy, nearest_player, per_frame_friction,
 };
-use crate::camera::GameCamera;
 use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind, SolidSides, solid_object};
 use crate::items::{ItemSpawn, RegisterItemKind, forget_terrain_item, kind};
 use crate::math::{quick_distance, turn_toward, yaw_forward, yaw_from_point_to_point};
@@ -247,13 +244,6 @@ fn prime_boxer_fly(In(spawn): In<SplineItemSpawn>, mut enemies: EnemySpawner) ->
     true
 }
 
-/// The player a fly goes for: the nearest one (`gMyCoord`, with one
-/// player).
-fn nearest_player(at: Vec3, players: impl Iterator<Item = Vec3>) -> Option<Vec3> {
-    players
-        .min_by(|a, b| quick_distance(at.xz(), a.xz()).total_cmp(&quick_distance(at.xz(), b.xz())))
-}
-
 /// What one step of flying did.
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct FlightStep {
@@ -342,25 +332,6 @@ fn glove_box(glove: Vec3) -> CollisionBox {
         glove.z + GLOVE_HALF_WIDTH,
         glove.z - GLOVE_HALF_WIDTH,
     )
-}
-
-/// Whether a sphere is on the visible side of the camera's left, right,
-/// near and far planes. Port of `IsSphereInFrustum_XZ`
-/// (original/src/QD3D/FrustumCulling.c), which ignores the top and bottom.
-fn in_frustum_xz(frustum: &Frustum, center: Vec3, radius: f32) -> bool {
-    const PLANES: [usize; 4] = [
-        0,
-        1,
-        ViewFrustum::NEAR_PLANE_IDX,
-        ViewFrustum::FAR_PLANE_IDX,
-    ];
-    let center = center.extend(1.0);
-    PLANES.iter().all(|&i| {
-        frustum
-            .half_spaces
-            .get(i)
-            .is_none_or(|plane| plane.normal_d().dot(center) + radius > 0.0)
-    })
 }
 
 /// Kills a fly: it leaves its spline, stops counting as an enemy for
@@ -535,7 +506,7 @@ fn move_boxer_flies(
     >,
     mut models: ModelQuery,
     players: Query<(Entity, &Transform, &CollisionBoxes), (With<Player>, Without<BoxerFlyBrain>)>,
-    cameras: Query<&Frustum, With<GameCamera>>,
+    culling: EnemyCulling,
     mut hurts: MessageWriter<HurtPlayer>,
     mut punched: MessageWriter<Punched>,
 ) {
@@ -548,7 +519,7 @@ fn move_boxer_flies(
             // Gone once the camera stopped seeing it.
             let at = body.transform.translation;
             let radius = **body.radius;
-            if !cameras.iter().any(|f| in_frustum_xz(f, at, radius)) {
+            if culling.is_culled(at, radius) {
                 commands.entity(fly).despawn();
                 continue;
             }
