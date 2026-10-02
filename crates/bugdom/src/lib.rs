@@ -34,6 +34,8 @@ impl Plugin for GamePlugin {
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as u32);
         app.insert_resource(math::GameRandom::from_seed(seed));
+        // Bevy takes at most 15 plugins per tuple, so they are grouped.
+        // Engine: states, simulation, rendering and tools.
         app.add_plugins((
             state::StatePlugin,
             pause::PausePlugin,
@@ -41,16 +43,19 @@ impl Plugin for GamePlugin {
             collision::CollisionPlugin,
             input::InputPlugin,
             terrain::TerrainPlugin,
-            player::PlayerPlugin,
             objects::ObjectsPlugin,
-            items::ItemsPlugin,
-            fences::FencePlugin,
-            splines::SplinesPlugin,
-            liquids::LiquidsPlugin,
             effects::EffectsPlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,
             dev::CapturePlugin,
+        ));
+        // Content: the player and what the level is made of.
+        app.add_plugins((
+            player::PlayerPlugin,
+            items::ItemsPlugin,
+            fences::FencePlugin,
+            splines::SplinesPlugin,
+            liquids::LiquidsPlugin,
         ));
     }
 }
