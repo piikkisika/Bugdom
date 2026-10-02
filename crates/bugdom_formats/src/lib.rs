@@ -10,6 +10,7 @@ mod four_cc;
 pub mod mac_roman;
 pub mod rsrc;
 pub mod skeleton;
+pub mod skin;
 pub mod tdmf;
 pub mod terrain;
 pub mod tga;
