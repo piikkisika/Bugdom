@@ -81,8 +81,7 @@ pub struct CheckpointDroplet {
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ExitTrigger;
 
-/// A door opened with a key (`TRIGTYPE_TWIGDOOR`). Opening it arrives with
-/// keys.
+/// A door opened with a key (`TRIGTYPE_TWIGDOOR`). `pickups.rs` opens it.
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeyDoor {
     pub key: u8,
