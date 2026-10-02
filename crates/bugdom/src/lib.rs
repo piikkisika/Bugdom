@@ -5,6 +5,7 @@ pub mod assets;
 pub mod camera;
 pub mod collision;
 pub mod dev;
+pub mod effects;
 pub mod fences;
 pub mod input;
 pub mod items;
@@ -44,6 +45,7 @@ impl Plugin for GamePlugin {
             items::ItemsPlugin,
             fences::FencePlugin,
             liquids::LiquidsPlugin,
+            effects::EffectsPlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,
             dev::CapturePlugin,
