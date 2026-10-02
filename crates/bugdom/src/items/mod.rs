@@ -11,8 +11,12 @@
 //! [`RegisterItemKind::register_item_kind`] (the original's
 //! `gTerrainItemAddRoutines`).
 
+mod anthill;
+mod hive;
 pub mod kind;
+mod pickups;
 mod scenery;
+mod traps;
 mod triggers;
 
 use bevy::ecs::system::SystemId;
@@ -55,7 +59,14 @@ impl Plugin for ItemsPlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             )
-            .add_plugins((scenery::plugin, triggers::plugin));
+            .add_plugins((
+                anthill::plugin,
+                hive::plugin,
+                pickups::plugin,
+                scenery::plugin,
+                traps::plugin,
+                triggers::plugin,
+            ));
     }
 }
 

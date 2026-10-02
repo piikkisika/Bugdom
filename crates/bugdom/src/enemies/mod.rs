@@ -1,10 +1,10 @@
 //! The enemy base: what every enemy kind shares.
 //!
 //! Port of original/src/Enemies/Enemy.c and original/src/Headers/enemy.h.
-//! Each enemy kind is its own plugin in `enemies/<name>.rs`, declared with
-//! a `mod` line here and added in [`EnemiesPlugin::build`]'s
-//! `add_plugins` (kept there, not in `lib.rs`, whose tuples are nearly
-//! full). This module gives them:
+//! Each enemy kind is its own plugin in `enemies/<name>.rs`, already
+//! declared here and added in [`EnemiesPlugin::build`]; a kind not yet
+//! ported has an empty plugin, so porting one only fills in its own file.
+//! This module gives them:
 //!
 //! - [`Enemy`] and [`EnemyKind`]: every enemy's root entity carries
 //!   `Enemy { kind }`. Its arrival and removal keep [`EnemyCounts`] up to
@@ -89,8 +89,6 @@
 //! [`EnemySystems::Move`] does). Despawning the root deletes the enemy
 //! (`DeleteEnemy`): its shadow and model go with it and the counts drop.
 
-pub mod larva;
-
 use avian3d::prelude::{ColliderDisabled, CollisionLayers, LayerMask, TransformInterpolation};
 use bevy::ecs::entity::EntityHashSet;
 use bevy::ecs::query::QueryData;
@@ -124,7 +122,25 @@ use crate::splines::{OnSpline, SplineSystems, detach_from_spline};
 use crate::state::{AppState, LevelAssets};
 use crate::terrain::TerrainMap;
 
+// One module per enemy kind (`crawling` is shared by the slug and the
+// caterpillar). The ant joins when its package merges.
 pub mod boxerfly;
+pub mod caterpillar;
+pub mod crawling;
+pub mod fire_ant;
+pub mod firefly;
+pub mod flying_bee;
+pub mod king_ant;
+pub mod larva;
+pub mod mosquito;
+pub mod pond_fish;
+pub mod queen_bee;
+pub mod roach;
+pub mod skippy;
+pub mod slug;
+pub mod spider;
+pub mod tick;
+pub mod worker_bee;
 
 pub struct EnemiesPlugin;
 
@@ -156,8 +172,28 @@ impl Plugin for EnemiesPlugin {
                 EnemySystems::Move.before(SplineSystems::Visibility),
             )
             .add_systems(FixedUpdate, apply_enemy_hurts.in_set(EnemySystems::Hurt));
-        // The enemy kinds' plugins, one line each (at most 15 per tuple).
-        app.add_plugins((boxerfly::BoxerFlyPlugin, larva::LarvaPlugin));
+        // The enemy kinds' plugins, one line each, in two tuples (Bevy takes
+        // at most 15 plugins per tuple).
+        app.add_plugins((
+            boxerfly::BoxerFlyPlugin,
+            caterpillar::CaterpillarPlugin,
+            fire_ant::FireAntPlugin,
+            firefly::FireFlyPlugin,
+            flying_bee::FlyingBeePlugin,
+            king_ant::KingAntPlugin,
+            larva::LarvaPlugin,
+            mosquito::MosquitoPlugin,
+        ));
+        app.add_plugins((
+            pond_fish::PondFishPlugin,
+            queen_bee::QueenBeePlugin,
+            roach::RoachPlugin,
+            skippy::SkippyPlugin,
+            slug::SlugPlugin,
+            spider::SpiderPlugin,
+            tick::TickPlugin,
+            worker_bee::WorkerBeePlugin,
+        ));
     }
 }
 
