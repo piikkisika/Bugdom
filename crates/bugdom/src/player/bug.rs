@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
 use super::ball::become_ball;
+use super::health::kill_player;
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::{Dying, Player, PlayerForm, PlayerModel};
 use crate::input::Action;
@@ -79,8 +80,15 @@ pub fn move_bug(
         bug.tick();
 
         let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
+        let (knocked, died) = (bug.motion.knocked.is_some(), bug.motion.died);
         bug.motion.store(&mut player, &mut commands, &mut messages);
         player.state.set_if_neq(state);
+        if died {
+            kill_player(&mut player, &mut commands, context.tuning().kill_delay);
+        } else if knocked && state == BugState::KnockedOnButt {
+            // Knocked again while already down, the fall starts over.
+            player.animated.restart();
+        }
         if rolled_up {
             become_ball(&mut player);
         }
@@ -258,6 +266,14 @@ impl Bug<'_> {
     /// `PLAYER_ANIM_SWIM` morph in `DoPlayerMovementAndCollision`).
     fn move_and_collide(&mut self, no_control: bool) {
         self.motion.move_and_collide(no_control);
+        // What the bug ran into hurt it during the move, so the rest of
+        // this tick already sees it fallen (`PlayerGotHurt` morphs the
+        // skeleton at once).
+        if self.motion.died {
+            self.state = BugState::Death;
+        } else if self.motion.knocked.is_some() {
+            self.state = BugState::KnockedOnButt;
+        }
         if self.motion.underwater.is_some() && !self.motion.killed {
             self.state = BugState::Swim;
         }
@@ -402,6 +418,50 @@ mod tests {
             top = top.max(bug.motion.speed);
         });
         assert!((top - 700.0).abs() < 1.0, "top speed {top}");
+    }
+
+    #[test]
+    fn a_hurt_knocks_the_bug_over_within_its_tick() {
+        let bench = Bench::lawn();
+        let hurt_box =
+            crate::collision::CollisionBox::new(10_000.0, -10_000.0, -100.0, 100.0, 100.0, -100.0)
+                .at(Vec3::new(START.x, 0.0, START.y));
+        let hurts = [BoxTarget {
+            entity: Entity::from_raw_u32(7).unwrap(),
+            kinds: CollisionKind::HurtMe.into(),
+            solid: SolidSides::TOUCHABLE,
+            boxes: vec![hurt_box],
+            old_boxes: vec![hurt_box],
+            velocity: Vec3::ZERO,
+            trigger: None,
+        }];
+        // A jump pressed this tick doesn't happen: by the time the bug
+        // reads its controls, it is already on its butt.
+        let input = ControlInput::for_tests(&[], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = Bug {
+            motion: bench.motion(PlayerForm::Bug, &input, &hurts),
+            state: BugState::Stand,
+            animator: &animator,
+            rolled_up: false,
+            drowned: false,
+        };
+        bug.motion.candidate_damage = vec![0.25];
+        bug.tick();
+        assert_eq!(bug.state, BugState::KnockedOnButt);
+        assert!(bug.motion.velocity.y > 0.0);
+
+        // A fatal hurt kills it at once.
+        let mut bug = Bug {
+            motion: bench.motion(PlayerForm::Bug, &input, &hurts),
+            state: BugState::Walk,
+            animator: &animator,
+            rolled_up: false,
+            drowned: false,
+        };
+        bug.motion.candidate_damage = vec![1.0];
+        bug.tick();
+        assert_eq!(bug.state, BugState::Death);
     }
 
     #[test]

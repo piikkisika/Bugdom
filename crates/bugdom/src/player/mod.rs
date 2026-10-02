@@ -327,17 +327,12 @@ fn respawn_dead_players(
             movement::PlayerData,
             &RespawnPoint,
             &mut Dying,
-            &mut Health,
-            &mut InvincibleTimer,
-            &mut ShieldTimer,
             &mut Inventory,
         ),
         With<Player>,
     >,
 ) {
-    for (mut player, respawn, mut dying, mut health, mut invincible, mut shield, mut inventory) in
-        &mut players
-    {
+    for (mut player, respawn, mut dying, mut inventory) in &mut players {
         dying.timer -= time.delta_secs();
         if dying.timer >= 0.0 {
             continue;
@@ -359,9 +354,9 @@ fn respawn_dead_players(
         **player.velocity = Vec3::ZERO;
         **player.previous = player.transform.translation;
         inventory.lose_life();
-        *invincible = InvincibleTimer(INVINCIBILITY_DURATION_DEATH);
-        *health = Health(PLAYER_MAX_HEALTH);
-        *shield = ShieldTimer(0.0);
+        *player.invincible = InvincibleTimer(INVINCIBILITY_DURATION_DEATH);
+        *player.health = Health(PLAYER_MAX_HEALTH);
+        *player.shield = ShieldTimer(0.0);
         // Sound: stop EFFECT_SHIELD.
         // The original leaves the liquid flag for the next collision check
         // to clear; clearing it now only differs for that one tick.

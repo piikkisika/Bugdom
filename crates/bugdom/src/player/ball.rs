@@ -16,6 +16,7 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 
 use super::bug::BugState;
+use super::health::{kill_player, knock_on_butt};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem, PlayerMessages};
 use super::{Player, PlayerForm, PlayerTuning};
 use crate::input::Action;
@@ -177,6 +178,7 @@ pub fn move_ball(
 
         let (spin, nitro, unrolled) = (ball.spin, ball.nitro, ball.unrolled);
         let swimming = ball.motion.form == PlayerForm::Bug;
+        let (knocked, died) = (ball.motion.knocked, ball.motion.died);
         player.ball_time.set_if_neq(BallTime(ball.ball_time));
         ball.motion.store(&mut player, &mut commands, &mut messages);
         player.spin.set_if_neq(spin);
@@ -185,6 +187,14 @@ pub fn move_ball(
             become_swimming_bug(&mut player);
         } else if unrolled {
             become_bug(&mut player, BugState::UnRoll);
+        }
+        // What the ball ran into hurt it during the move; the ball only
+        // turns into the knocked bug now that its move is over
+        // (`gPlayerKnockOnButt`, original/src/Player/Player_Ball.c).
+        if died {
+            kill_player(&mut player, &mut commands, context.tuning().kill_delay);
+        } else if let Some(velocity) = knocked {
+            knock_on_butt(&mut player, velocity);
         }
     }
 }

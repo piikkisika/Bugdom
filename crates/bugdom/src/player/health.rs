@@ -51,8 +51,9 @@ pub struct ShieldTimer(pub f32);
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Torched;
 
-/// Hurts a player (`PlayerGotHurt`). Anything may send it; the player's
-/// systems apply it after the player has moved.
+/// Hurts a player (`PlayerGotHurt`). Other objects send it; the player's
+/// systems apply it after the player has moved. What the player runs into
+/// itself hurts it in the middle of its move instead.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct HurtPlayer {
     pub player: Entity,
@@ -136,29 +137,32 @@ pub fn knock_velocity(
     }
 }
 
-/// Applies the hurts sent this tick, in order.
+/// Applies the hurts other objects sent, in order, after the player has
+/// moved.
 ///
-/// Port of `PlayerGotHurt` (original/src/Player/MyGuy.c). The original
-/// knocks the bug over in the middle of its move when its own collision
-/// hurts it; here every hurt waits until the move is over, so the knock
-/// moves the player from the next tick.
+/// Port of `PlayerGotHurt` (original/src/Player/MyGuy.c) with
+/// `playerIsCurrent` false: the original's objects hurt the player while
+/// they move, after the player's own move.
 pub(super) fn hurt_players(
     mut hurts: MessageReader<HurtPlayer>,
     tuning: Res<PlayerTuning>,
     mut commands: Commands,
     velocities: Query<&Velocity, Without<Player>>,
-    mut players: Query<(PlayerData, &mut Health, &mut InvincibleTimer, &ShieldTimer), With<Player>>,
+    mut players: Query<PlayerData, With<Player>>,
 ) {
     // `Dying` is inserted through commands, so a death this tick is
     // remembered here.
     let mut killed = EntityHashSet::default();
     for hurt in hurts.read() {
-        let Ok((mut player, mut health, mut invincible, shield)) = players.get_mut(hurt.player)
-        else {
+        let Ok(mut player) = players.get_mut(hurt.player) else {
             continue;
         };
         let dying = player.dying || killed.contains(&player.entity);
-        match take_hurt(hurt, dying, *shield, &mut health, &mut invincible) {
+        let shield = *player.shield;
+        let PlayerDataItem {
+            health, invincible, ..
+        } = &mut player;
+        match take_hurt(hurt, dying, shield, health, invincible) {
             HurtOutcome::Ignored => continue,
             HurtOutcome::Killed => {
                 kill_player(&mut player, &mut commands, tuning.kill_delay);

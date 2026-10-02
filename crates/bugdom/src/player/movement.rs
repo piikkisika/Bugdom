@@ -15,7 +15,9 @@ use super::animation::AnimatedBugState;
 use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
 use super::contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
-use super::health::HurtPlayer;
+use super::health::{
+    HurtOutcome, HurtPlayer, InvincibleTimer, KNOCK_RISE_SPEED, ShieldTimer, take_hurt,
+};
 use super::{
     Dying, PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle,
     PlayerTuning, player_collision_mask,
@@ -24,11 +26,11 @@ use crate::collision::{
     BoxMover, BoxTarget, CollisionBoxes, CollisionCandidates, CollisionKind, SolidSides,
     TriggerHit, collide_floor_and_ceiling, resolve_box_collisions,
 };
-use crate::combat::Damage;
+use crate::combat::{Damage, Health};
 use crate::fences::Fences;
 use crate::input::{Action, ControlInput, ControlSettings};
 use crate::liquids::{Liquid, LiquidKind, Underwater};
-use crate::math::{yaw_forward, yaw_of};
+use crate::math::{yaw_forward, yaw_from_point_to_point, yaw_of};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::terrain::TerrainMap;
 
@@ -48,7 +50,6 @@ pub(super) struct MotionContext<'w, 's> {
 #[derive(SystemParam)]
 pub(super) struct PlayerMessages<'w> {
     triggers: MessageWriter<'w, TriggerHit>,
-    hurts: MessageWriter<'w, HurtPlayer>,
     touched: MessageWriter<'w, TouchedEnemy>,
     ball_hits: MessageWriter<'w, BallHitEnemy>,
     bops: MessageWriter<'w, EnemyBopped>,
@@ -80,6 +81,9 @@ pub(super) struct PlayerData {
     pub ground: &'static mut GroundContact,
     pub underwater: Option<&'static Underwater>,
     pub dying: Has<Dying>,
+    pub health: &'static mut Health,
+    pub invincible: &'static mut InvincibleTimer,
+    pub shield: &'static mut ShieldTimer,
 }
 
 /// Everything one tick of movement reads and writes, gathered so that the
@@ -119,8 +123,15 @@ pub(super) struct Motion<'a> {
     /// Triggers that went off and stopped being solid this tick.
     pub spent: EntityHashSet,
     pub triggered: Vec<TriggerHit>,
-    /// Hurts from what the player touched this tick.
-    pub hurts: Vec<HurtPlayer>,
+    pub health: Health,
+    pub invincible: InvincibleTimer,
+    pub shield: ShieldTimer,
+    /// What the player ran into this tick knocked it on its butt, with
+    /// this velocity. The bug is knocked at once; the ball only once its
+    /// move is over (`gPlayerKnockOnButt`).
+    pub knocked: Option<Vec3>,
+    /// What the player ran into this tick took the last of its health.
+    pub died: bool,
     pub touched: Vec<TouchedEnemy>,
     pub ball_hits: Vec<BallHitEnemy>,
     pub bops: Vec<EnemyBopped>,
@@ -182,7 +193,11 @@ impl MotionContext<'_, '_> {
             killed: player.dying,
             spent: EntityHashSet::default(),
             triggered: Vec::new(),
-            hurts: Vec::new(),
+            health: *player.health,
+            invincible: *player.invincible,
+            shield: *player.shield,
+            knocked: None,
+            died: false,
             touched: Vec::new(),
             ball_hits: Vec::new(),
             bops: Vec::new(),
@@ -204,7 +219,6 @@ impl Motion<'_> {
         messages: &mut PlayerMessages,
     ) {
         messages.triggers.write_batch(self.triggered.drain(..));
-        messages.hurts.write_batch(self.hurts.drain(..));
         messages.touched.write_batch(self.touched.drain(..));
         messages.ball_hits.write_batch(self.ball_hits.drain(..));
         messages.bops.write_batch(self.bops.drain(..));
@@ -225,6 +239,8 @@ impl Motion<'_> {
         **player.speed = self.speed;
         **player.steering = self.steering;
         *player.ground = self.ground;
+        player.health.set_if_neq(self.health);
+        player.invincible.set_if_neq(self.invincible);
     }
 
     pub fn player_relative_keys(&self) -> bool {
@@ -478,10 +494,11 @@ impl Motion<'_> {
                 }
             }
             if target.kinds.has_all(CollisionKind::HurtMe) {
-                self.hurts.push(HurtPlayer {
-                    knock: !target.kinds.has_all(CollisionKind::HurtNoKnock),
-                    ..HurtPlayer::new(self.entity, Some(target.entity), damage)
-                });
+                self.hurt_by(
+                    target,
+                    damage,
+                    !target.kinds.has_all(CollisionKind::HurtNoKnock),
+                );
             }
             // A drain's damage is ball time per second.
             if target.kinds.has_all(CollisionKind::DrainBallTime) {
@@ -517,8 +534,7 @@ impl Motion<'_> {
     fn hit_enemy(&mut self, enemy: &BoxTarget, damage: f32) {
         let spiked = enemy.kinds.has_all(CollisionKind::Spiked);
         if spiked {
-            self.hurts
-                .push(HurtPlayer::new(self.entity, Some(enemy.entity), damage));
+            self.hurt_by(enemy, damage, true);
         }
         self.touched.push(TouchedEnemy {
             player: self.entity,
@@ -532,6 +548,57 @@ impl Motion<'_> {
                 ball_velocity: self.start_velocity,
                 ball_speed: self.speed,
             });
+        }
+    }
+
+    /// Hurts the player with what it ran into, in the middle of its move as
+    /// in the original: a kill makes the rest of the move a dead player's,
+    /// and the bug's knock drives the rest of the move. Hurts that other
+    /// objects send go through [`HurtPlayer`] instead.
+    ///
+    /// Port of `PlayerGotHurt` (original/src/Player/MyGuy.c) with
+    /// `playerIsCurrent`, and of `KnockPlayerBugOnButt`
+    /// (original/src/Player/Player_Bug.c) with `allowBall` false.
+    fn hurt_by(&mut self, source: &BoxTarget, damage: f32, knock: bool) {
+        let hurt = HurtPlayer {
+            knock,
+            ..HurtPlayer::new(self.entity, Some(source.entity), damage)
+        };
+        let outcome = take_hurt(
+            &hurt,
+            self.killed,
+            self.shield,
+            &mut self.health,
+            &mut self.invincible,
+        );
+        // Sound: EFFECT_OUCH at the player, unless the hurt was ignored.
+        match outcome {
+            HurtOutcome::Ignored => {}
+            HurtOutcome::Killed => {
+                self.killed = true;
+                self.died = true;
+            }
+            HurtOutcome::Hurt => {
+                if knock {
+                    let velocity =
+                        Vec3::new(source.velocity.x, KNOCK_RISE_SPEED, source.velocity.z);
+                    self.knocked = Some(velocity);
+                    if self.form == PlayerForm::Bug {
+                        self.knock(velocity);
+                    }
+                }
+            }
+        }
+    }
+
+    /// The motion part of `KnockPlayerBugOnButt`: the knock's velocity, no
+    /// steering, and facing where the knock came from.
+    pub fn knock(&mut self, velocity: Vec3) {
+        self.velocity = velocity;
+        self.steering = Vec2::ZERO;
+        if velocity != Vec3::ZERO {
+            let at = self.coord.xz();
+            self.yaw = yaw_from_point_to_point(self.yaw, at, at - velocity.xz());
         }
     }
 
@@ -601,7 +668,11 @@ pub(super) mod bench {
                 killed: false,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
-                hurts: Vec::new(),
+                health: Health::default(),
+                invincible: InvincibleTimer::default(),
+                shield: ShieldTimer::default(),
+                knocked: None,
+                died: false,
                 touched: Vec::new(),
                 ball_hits: Vec::new(),
                 bops: Vec::new(),
@@ -641,7 +712,8 @@ pub(super) mod bench {
                 input,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
-                hurts: Vec::new(),
+                knocked: None,
+                died: false,
                 touched: Vec::new(),
                 ball_hits: Vec::new(),
                 bops: Vec::new(),
@@ -713,22 +785,79 @@ mod tests {
     }
 
     #[test]
-    fn hurting_objects_hurt_with_their_damage() {
+    fn hurting_objects_hurt_and_knock_within_the_move() {
         let bench = Bench::lawn();
         let input = ControlInput::default();
-        let hurts = around(&bench, &[CollisionKind::HurtMe]);
+        let mut hurts = around(&bench, &[CollisionKind::HurtMe]);
+        hurts[0].velocity = Vec3::new(300.0, 0.0, -400.0);
         let motion = touch(&bench, PlayerForm::Bug, &input, &hurts, 0.2);
-        let hurt = motion.hurts.first().expect("a hurt");
-        assert_eq!(hurt.damage, 0.2);
-        assert!(hurt.knock);
-        assert!(!hurt.override_shield);
-        assert_eq!(hurt.invincible_for, INVINCIBILITY_DURATION);
-        assert_eq!(hurt.source, Some(target_entity()));
+        assert!((*motion.health - 0.8).abs() < 1e-6);
+        assert_eq!(*motion.invincible, INVINCIBILITY_DURATION);
         assert!(motion.touched.is_empty());
+        // The bug leaves its move with the knock's velocity, facing where
+        // the knock came from.
+        let knock = Vec3::new(300.0, KNOCK_RISE_SPEED, -400.0);
+        assert_eq!(motion.knocked, Some(knock));
+        assert_eq!(motion.velocity.xz(), knock.xz());
+        assert!(motion.velocity.y > 0.0);
+        assert_eq!(motion.steering, Vec2::ZERO);
+        assert!((yaw_forward(motion.yaw) + knock.xz().normalize()).length() < 1e-3);
+
+        // A fast bug's move is split in several steps; the steps after the
+        // hurt already move with the knock, so it rises within this tick.
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &hurts);
+        motion.candidate_damage = vec![0.2];
+        motion.limit_speed = false;
+        motion.velocity = Vec3::new(0.0, 0.0, 3.0 * bench.tuning.max_step / DT);
+        motion.move_and_collide(true);
+        assert!(motion.knocked.is_some());
+        assert!(motion.coord.y > motion.old_coord.y);
 
         let no_knock = around(&bench, &[CollisionKind::HurtMe, CollisionKind::HurtNoKnock]);
         let motion = touch(&bench, PlayerForm::Bug, &input, &no_knock, 0.2);
-        assert!(motion.hurts.first().is_some_and(|h| !h.knock));
+        assert!((*motion.health - 0.8).abs() < 1e-6);
+        assert_eq!(motion.knocked, None);
+    }
+
+    #[test]
+    fn the_ball_is_knocked_only_after_its_move() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let hurts = around(&bench, &[CollisionKind::HurtMe]);
+        let motion = touch(&bench, PlayerForm::Ball, &input, &hurts, 0.2);
+        assert!((*motion.health - 0.8).abs() < 1e-6);
+        assert!(motion.knocked.is_some());
+        assert!(motion.velocity.y < KNOCK_RISE_SPEED);
+    }
+
+    #[test]
+    fn a_fatal_hurt_kills_within_the_move() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let hurts = around(&bench, &[CollisionKind::HurtMe]);
+        let motion = touch(&bench, PlayerForm::Bug, &input, &hurts, 1.0);
+        assert!(motion.died && motion.killed);
+        assert_eq!(*motion.health, 0.0);
+        assert_eq!(motion.knocked, None);
+    }
+
+    #[test]
+    fn shield_and_invincibility_stop_hurts() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let hurts = around(&bench, &[CollisionKind::HurtMe]);
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &hurts);
+        motion.candidate_damage = vec![0.2];
+        motion.shield = ShieldTimer(1.0);
+        motion.move_and_collide(false);
+        assert_eq!(*motion.health, 1.0);
+
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &hurts);
+        motion.candidate_damage = vec![0.2];
+        motion.invincible = InvincibleTimer(1.0);
+        motion.move_and_collide(false);
+        assert_eq!(*motion.health, 1.0);
+        assert_eq!(motion.knocked, None);
     }
 
     #[test]
@@ -738,7 +867,7 @@ mod tests {
         let drain = around(&bench, &[CollisionKind::Misc, CollisionKind::DrainBallTime]);
         let motion = touch(&bench, PlayerForm::Ball, &input, &drain, 0.5);
         assert!((motion.ball_time_drained - 0.5 * DT).abs() < 1e-6);
-        assert!(motion.hurts.is_empty());
+        assert_eq!(*motion.health, 1.0);
     }
 
     #[test]
@@ -747,14 +876,14 @@ mod tests {
         let input = ControlInput::default();
         let enemy = around(&bench, &[CollisionKind::Enemy, CollisionKind::Spiked]);
         let motion = touch(&bench, PlayerForm::Ball, &input, &enemy, 0.3);
-        assert_eq!(motion.hurts.first().map(|h| h.damage), Some(0.3));
+        assert!((*motion.health - 0.7).abs() < 1e-6);
         assert!(motion.touched.first().is_some_and(|t| t.spiked));
         assert!(!motion.ball_hits.is_empty());
         assert!(motion.bops.is_empty());
 
         // The bug only touches it.
         let motion = touch(&bench, PlayerForm::Bug, &input, &enemy, 0.3);
-        assert!(!motion.hurts.is_empty());
+        assert!((*motion.health - 0.7).abs() < 1e-6);
         assert!(motion.ball_hits.is_empty());
     }
 
@@ -764,7 +893,7 @@ mod tests {
         let input = ControlInput::default();
         let enemy = around(&bench, &[CollisionKind::Enemy]);
         let motion = touch(&bench, PlayerForm::Bug, &input, &enemy, 0.3);
-        assert!(motion.hurts.is_empty());
+        assert_eq!(*motion.health, 1.0);
         assert!(motion.touched.first().is_some_and(|t| !t.spiked));
     }
 
