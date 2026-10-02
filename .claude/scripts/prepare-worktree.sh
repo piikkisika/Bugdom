@@ -13,6 +13,9 @@ if [ ! -e "$wt/original/Data" ]; then
   rmdir "$wt/original" 2>/dev/null || true
   ln -s "$main/original" "$wt/original"
 fi
+# Keep the link out of commits: staged, it would replace the submodule with
+# a symlink wherever the branch is merged.
+git -C "$wt" update-index --skip-worktree original
 if [ ! -d "$wt/target" ]; then
   cp -al "$main/target" "$wt/target"
   for d in "$wt/target/debug" "$wt/target/debug/deps" "$wt/target/debug/.fingerprint" \
