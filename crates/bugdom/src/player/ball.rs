@@ -19,7 +19,7 @@ use super::bug::BugState;
 use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem};
 use super::{Player, PlayerForm, PlayerTuning};
 use crate::collision::TriggerHit;
-use crate::input::{Action, ControlInput};
+use crate::input::Action;
 use crate::math::turn_toward;
 use crate::terrain::{LayerKind, TerrainMap};
 
@@ -30,11 +30,9 @@ pub const PLAYER_BALL_FOOT_OFFSET: f32 = 50.0;
 /// Distance from the ball's centre up to its top (`PLAYER_BALL_HEADOFFSET`).
 pub const PLAYER_BALL_HEAD_OFFSET: f32 = 45.0;
 
-/// How much ball time is left, from 0 to 1 (`gBallTimer`). The ball drains
-/// it, and the player can't become the ball without it. It belongs to the
-/// game rather than to the player entity, because it carries over from one
-/// level to the next and goes into saved games.
-#[derive(Resource, Debug, Clone, Copy, PartialEq, Deref, DerefMut)]
+/// How much ball time a player has left, from 0 to 1 (`gBallTimer`). The
+/// ball drains it, and the player can't become the ball without it.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Deref, DerefMut)]
 pub struct BallTime(pub f32);
 
 impl Default for BallTime {
@@ -105,16 +103,14 @@ pub fn has_headroom_to_unroll(map: &TerrainMap, tuning: &PlayerTuning, coord: Ve
 /// the original calls once a frame before anything moves. The morph sound
 /// arrives with the sound effects.
 pub fn check_player_morph(
-    input: Res<ControlInput>,
-    ball_time: Res<BallTime>,
     map: Res<TerrainMap>,
     tuning: Res<PlayerTuning>,
     mut players: Query<PlayerData, With<Player>>,
 ) {
-    if **ball_time <= 0.0 || !input.just_pressed(Action::MorphPlayer) {
-        return;
-    }
     for mut player in &mut players {
+        if **player.ball_time <= 0.0 || !player.input.just_pressed(Action::MorphPlayer) {
+            continue;
+        }
         match *player.form {
             PlayerForm::Ball => {
                 if has_headroom_to_unroll(&map, &tuning, player.transform.translation) {
@@ -150,7 +146,6 @@ struct Ball<'a> {
 /// trail's particles arrive with the particle effects.
 pub fn move_ball(
     context: MotionContext,
-    mut ball_time: ResMut<BallTime>,
     mut trigger_hits: MessageWriter<TriggerHit>,
     mut players: Query<PlayerData, With<Player>>,
 ) {
@@ -162,13 +157,13 @@ pub fn move_ball(
             motion: context.motion(&player),
             spin: *player.spin,
             nitro: **player.nitro,
-            ball_time: **ball_time,
+            ball_time: **player.ball_time,
             unrolled: false,
         };
         ball.tick();
 
         let (spin, nitro, unrolled) = (ball.spin, ball.nitro, ball.unrolled);
-        ball_time.set_if_neq(BallTime(ball.ball_time));
+        player.ball_time.set_if_neq(BallTime(ball.ball_time));
         ball.motion.store(&mut player, &mut trigger_hits);
         player.spin.set_if_neq(spin);
         player.nitro.set_if_neq(Nitro(nitro));
@@ -273,6 +268,7 @@ impl Ball<'_> {
 mod tests {
     use super::super::movement::bench::{Bench, DT};
     use super::*;
+    use crate::input::ControlInput;
 
     /// Runs the ball's movement for `ticks` ticks from the Lawn's start,
     /// with the same input every tick (apart from presses, which only the
@@ -408,5 +404,42 @@ mod tests {
         // Without a ceiling there is always room.
         let lawn = Bench::lawn();
         assert!(has_headroom_to_unroll(&lawn.map, &tuning, Vec3::ZERO));
+    }
+
+    #[test]
+    fn each_player_morphs_on_its_own_input_and_ball_time() {
+        use bevy::ecs::system::RunSystemOnce;
+
+        use crate::collision::{CollisionKind, SolidSides, solid_object};
+
+        let mut world = World::new();
+        world.insert_resource(TerrainMap::load_for_tests("Lawn", false));
+        world.init_resource::<PlayerTuning>();
+        let mut spawn = |pressed: &[Action], ball_time: f32| {
+            world
+                .spawn((
+                    Player,
+                    Transform::default(),
+                    solid_object(
+                        vec![PlayerForm::Bug.collision_box()],
+                        CollisionKind::Player,
+                        SolidSides::TOUCHABLE,
+                    ),
+                    ControlInput::for_tests(&[], pressed),
+                    BallTime(ball_time),
+                ))
+                .id()
+        };
+        let presses = spawn(&[Action::MorphPlayer], 1.0);
+        let idle = spawn(&[], 1.0);
+        let out_of_time = spawn(&[Action::MorphPlayer], 0.0);
+
+        world
+            .run_system_once(check_player_morph)
+            .expect("the system runs");
+        let state = |entity| *world.get::<BugState>(entity).expect("a bug state");
+        assert_eq!(state(presses), BugState::RollUp);
+        assert_eq!(state(idle), BugState::Stand);
+        assert_eq!(state(out_of_time), BugState::Stand);
     }
 }

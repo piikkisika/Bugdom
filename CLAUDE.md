@@ -47,6 +47,10 @@ radians).
 - Prefer generic, reusable components (`Velocity`, `Health`, `Hurtbox`,
   `RidingPlatform(Entity)`, …) over kind-specific fields. Check the existing
   components before adding new ones.
+- Keep everything about a player on its entity, so the game can have
+  several players later: state, input and preferences are components, not
+  resources, and systems loop over players instead of using `single()`.
+  Resources are for things shared by everyone (tuning constants, level data).
 - Kind-specific state goes in typed components. Never copy the C scratch slots
   (`SpecialL`/`SpecialF`/`Flag`).
 - Tunable numbers (speeds, health, timings) go in data or named constants

@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
 use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind};
-use crate::input::{Action, ControlInput, InputEnabled};
+use crate::input::{Action, ControlInput, InputEnabled, LocalControls};
 use crate::level::{
     AMBIENT_BRIGHTNESS, CAMERA_FOV, CurrentLevel, FILL_BRIGHTNESS, HITHER_DISTANCE,
 };
@@ -149,6 +149,10 @@ fn spawn_level_lights(mut commands: Commands, level: Res<CurrentLevel>) {
         ));
     }
 }
+
+/// The player a [`FollowCamera`] follows.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CameraTarget(pub Entity);
 
 /// Converts the original's ambient brightness to Bevy's ambient brightness.
 const AMBIENT_TO_BEVY: f32 = 1.0;
@@ -308,56 +312,70 @@ impl FollowCamera {
     }
 }
 
-/// Puts the camera behind the player when the level starts.
+/// Puts each camera behind a locally controlled player when the level
+/// starts. There is one camera, so only the first player gets one; more
+/// cameras arrive with split screen.
+///
 /// Port of `InitCamera` (original/src/QD3D/Camera.c).
 fn place_follow_camera(
     mut commands: Commands,
     map: Res<TerrainMap>,
-    mut camera_angle: ResMut<PlayerToCameraAngle>,
-    players: Query<&Transform, With<Player>>,
+    mut players: Query<(Entity, &Transform, &mut PlayerToCameraAngle), With<LocalControls>>,
     cameras: Query<Entity, With<GameCamera>>,
 ) {
-    let Ok(player) = players.single() else {
-        return;
-    };
-    let mut camera = FollowCamera::behind(player.translation, crate::math::yaw_of(player.rotation));
-    for _ in 0..FollowCamera::PRIME_UPDATES {
-        // No items are out yet when the original primes its camera.
-        camera.update(
-            player.translation,
-            0.0,
-            &map,
-            |_| None,
-            &mut camera_angle,
-            FollowCamera::PRIME_DT,
-        );
-    }
-    for entity in &cameras {
-        commands.entity(entity).remove::<FlyCamera>().insert((
-            camera.transform(),
-            camera.clone(),
-            TransformInterpolation,
-        ));
+    let mut players: Vec<_> = players.iter_mut().collect();
+    players.sort_by_key(|(entity, ..)| *entity);
+    let mut cameras: Vec<_> = cameras.iter().collect();
+    cameras.sort();
+    for (camera_entity, (player_entity, player, mut camera_angle)) in
+        cameras.into_iter().zip(players)
+    {
+        let mut camera =
+            FollowCamera::behind(player.translation, crate::math::yaw_of(player.rotation));
+        for _ in 0..FollowCamera::PRIME_UPDATES {
+            // No items are out yet when the original primes its camera.
+            camera.update(
+                player.translation,
+                0.0,
+                &map,
+                |_| None,
+                &mut camera_angle,
+                FollowCamera::PRIME_DT,
+            );
+        }
+        commands
+            .entity(camera_entity)
+            .remove::<FlyCamera>()
+            .insert((
+                camera.transform(),
+                camera,
+                CameraTarget(player_entity),
+                TransformInterpolation,
+            ));
     }
 }
 
 /// Moves the camera after the player. Port of `UpdateCamera`.
 fn follow_player(
     time: Res<Time>,
-    input: Res<ControlInput>,
     map: Res<TerrainMap>,
     spatial: SpatialQuery,
     blockers: Query<(&Transform, &CollisionBoxes), Without<GameCamera>>,
-    mut camera_angle: ResMut<PlayerToCameraAngle>,
-    players: Query<&Transform, (With<Player>, Without<GameCamera>)>,
-    mut cameras: Query<(&mut FollowCamera, &mut Transform), (With<GameCamera>, Without<FlyCamera>)>,
+    mut players: Query<
+        (&Transform, &ControlInput, &mut PlayerToCameraAngle),
+        (With<Player>, Without<GameCamera>),
+    >,
+    mut cameras: Query<
+        (&CameraTarget, &mut FollowCamera, &mut Transform),
+        (With<GameCamera>, Without<FlyCamera>),
+    >,
 ) {
-    let Ok(player) = players.single() else {
-        return;
-    };
     let dt = time.delta_secs();
-    for (mut camera, mut transform) in &mut cameras {
-        camera.zoom(&input, dt);
+    for (target, mut camera, mut transform) in &mut cameras {
+        let Ok((player, input, mut camera_angle)) = players.get_mut(target.0) else {
+            continue;
+        };
+        camera.zoom(input, dt);
         camera.update(
             player.translation,
             input.camera_swivel(),

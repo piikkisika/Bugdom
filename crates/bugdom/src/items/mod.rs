@@ -19,7 +19,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bugdom_formats::terrain::Item;
 
-pub use triggers::{AreaCompleted, Checkpoints};
+pub use triggers::AreaCompleted;
 
 use crate::assets::terrain::TerrainAsset;
 use crate::camera::{CameraSystems, FlyCamera, FollowCamera, GameCamera};

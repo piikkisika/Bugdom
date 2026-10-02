@@ -12,7 +12,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
-use super::ball::{BallSpin, Nitro};
+use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
 use super::{
     PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle, PlayerTuning,
@@ -28,16 +28,14 @@ use crate::math::{yaw_forward, yaw_of};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::terrain::TerrainMap;
 
-/// The resources a tick of the player's movement reads.
+/// The world a tick of a player's movement reads: the same for every
+/// player.
 #[derive(SystemParam)]
 pub(super) struct MotionContext<'w> {
     time: Res<'w, Time>,
     tuning: Res<'w, PlayerTuning>,
-    input: Res<'w, ControlInput>,
-    settings: Res<'w, ControlSettings>,
     map: Res<'w, TerrainMap>,
     fences: Option<Res<'w, Fences>>,
-    camera_angle: Res<'w, PlayerToCameraAngle>,
 }
 
 /// The player's components that its movement reads and writes, whatever
@@ -48,6 +46,10 @@ pub(super) struct PlayerData {
     pub entity: Entity,
     pub previous: &'static mut PreviousPosition,
     pub candidates: &'static CollisionCandidates,
+    pub input: &'static ControlInput,
+    pub settings: &'static ControlSettings,
+    pub camera_angle: &'static PlayerToCameraAngle,
+    pub ball_time: &'static mut BallTime,
     pub form: &'static mut PlayerForm,
     pub boxes: &'static mut CollisionBoxes,
     pub collider: &'static mut Collider,
@@ -102,6 +104,8 @@ impl<'w> MotionContext<'w> {
     pub fn motion<'a>(&'a self, player: &PlayerDataItem<'a, '_>) -> Motion<'a> {
         // Copied out so that the motion doesn't borrow the player.
         let candidates: &'a CollisionCandidates = player.candidates;
+        let input: &'a ControlInput = player.input;
+        let settings: &'a ControlSettings = player.settings;
         Motion {
             entity: player.entity,
             form: *player.form,
@@ -113,14 +117,14 @@ impl<'w> MotionContext<'w> {
             steering: **player.steering,
             ground: *player.ground,
             tuning: &self.tuning,
-            input: &self.input,
-            settings: &self.settings,
+            input,
+            settings,
             map: &self.map,
             fences: self.fences.as_deref(),
             candidates: &candidates.0,
             spent: EntityHashSet::default(),
             triggered: Vec::new(),
-            camera_angle: **self.camera_angle,
+            camera_angle: **player.camera_angle,
             dt: self.time.delta_secs(),
         }
     }

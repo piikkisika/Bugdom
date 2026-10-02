@@ -17,9 +17,9 @@ use crate::collision::{
 use crate::level::{CurrentLevel, LevelType};
 use crate::math::GameRandom;
 use crate::objects::{ModelFile, ModelRef, ModelSpawner, ObjectModel, Shading};
-use crate::player::PlayerSystems;
+use crate::player::{PlayerSystems, RespawnPoint};
 use crate::state::AppState;
-use crate::terrain::{PlayerStart, TerrainMap, TerrainSystems};
+use crate::terrain::{TerrainMap, TerrainSystems};
 
 pub(super) fn plugin(app: &mut App) {
     app.register_item_kind(item::CHECKPOINT, add_checkpoint)
@@ -62,16 +62,6 @@ const LAWN_DOOR_SCALE: f32 = 0.6;
 /// The item flag set once a door has been opened (`ITEM_FLAGS_USER1`).
 pub const ITEM_FLAG_USER1: u16 = 1 << 1;
 
-/// The checkpoint the player restarts from (`gBestCheckPoint`,
-/// `gMostRecentCheckPointCoord` and `gCheckPointRot`).
-#[derive(Resource, Debug, Clone, Copy, PartialEq)]
-pub struct Checkpoints {
-    /// The highest checkpoint number reached, if any.
-    pub best: Option<u8>,
-    pub position: Vec3,
-    pub yaw: f32,
-}
-
 /// Set when the player reaches the level's exit (`gAreaCompleted`).
 #[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Eq, Deref, DerefMut)]
 pub struct AreaCompleted(pub bool);
@@ -108,29 +98,23 @@ pub struct ChainedTo(pub Entity);
 #[relationship_target(relationship = ChainedTo, linked_spawn)]
 pub struct ChainedParts(Vec<Entity>);
 
-/// Port of the checkpoint and exit set-up in `InitPlayerAtStartOfLevel`
-/// (original/src/Player/MyGuy.c) and `InitArea` (original/src/System/Main.c).
-fn reset_level_progress(mut commands: Commands, start: Res<PlayerStart>, map: Res<TerrainMap>) {
-    let (x, z) = (start.position.x, start.position.y);
-    commands.insert_resource(Checkpoints {
-        best: None,
-        position: Vec3::new(x, map.floor_height(x, z), z),
-        // Rounded down to a quarter turn.
-        yaw: f32::from(start.aim / 2) * (TAU / 4.0),
-    });
+/// Port of the exit set-up in `InitArea` (original/src/System/Main.c). Each
+/// player's checkpoint starts with the player ([`RespawnPoint`]).
+fn reset_level_progress(mut commands: Commands) {
     commands.insert_resource(AreaCompleted(false));
 }
 
 /// Port of `AddCheckpoint`. `params[0]` is the checkpoint's number and
 /// `params[1]` the player's direction there, in quarter turns. Only
-/// checkpoints after the best one reached get a droplet.
+/// checkpoints after the best one reached get a droplet; with several
+/// players, a droplet stays while any player has yet to reach it.
 fn add_checkpoint(
     In(spawn): In<ItemSpawn>,
     mut commands: Commands,
     mut models: ModelSpawner,
     mut random: ResMut<GameRandom>,
     map: Res<TerrainMap>,
-    checkpoints: Res<Checkpoints>,
+    players: Query<&RespawnPoint>,
 ) -> bool {
     let number = spawn.params[0];
     let y = map.floor_height(spawn.position.x, spawn.position.y);
@@ -145,7 +129,8 @@ fn add_checkpoint(
     }
     .spawn("Checkpoint", &mut commands, &mut models, &spawn);
 
-    if checkpoints.best.is_some_and(|best| number <= best) {
+    let reached = |respawn: &RespawnPoint| respawn.checkpoint.is_some_and(|best| number <= best);
+    if !players.is_empty() && players.iter().all(reached) {
         return true;
     }
     let offset = DROPLET_OFFSET * CHECKPOINT_SCALE;
@@ -221,20 +206,24 @@ fn tag_checkpoints(
     mut commands: Commands,
     mut hits: MessageReader<TriggerHit>,
     droplets: Query<(&CheckpointDroplet, &Transform)>,
-    mut checkpoints: ResMut<Checkpoints>,
+    mut players: Query<&mut RespawnPoint>,
 ) {
     for hit in hits.read() {
         let Ok((droplet, transform)) = droplets.get(hit.trigger) else {
             continue;
         };
-        if checkpoints.best.is_none_or(|best| droplet.number > best) {
-            *checkpoints = Checkpoints {
-                best: Some(droplet.number),
+        let Ok(mut respawn) = players.get_mut(hit.mover) else {
+            continue;
+        };
+        if respawn.checkpoint.is_none_or(|best| droplet.number > best) {
+            *respawn = RespawnPoint {
+                checkpoint: Some(droplet.number),
                 position: transform.translation,
                 yaw: droplet.player_yaw,
             };
         }
-        commands.entity(hit.trigger).despawn();
+        // Two players can reach it in the same tick.
+        commands.entity(hit.trigger).try_despawn();
     }
 }
 

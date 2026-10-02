@@ -10,6 +10,8 @@ mod bug;
 mod movement;
 mod tuning;
 
+use std::f32::consts::TAU;
+
 use avian3d::prelude::{LayerMask, TransformInterpolation};
 use bevy::prelude::*;
 
@@ -23,6 +25,7 @@ pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 use crate::collision::{
     CollisionBox, CollisionCandidates, CollisionKind, CollisionSystems, SolidSides, solid_object,
 };
+use crate::input::{ControlInput, ControlSettings, LocalControls};
 use crate::objects::{ModelSpawner, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::skeleton::{Skeleton, SkeletonSystems};
@@ -34,8 +37,6 @@ pub struct PlayerPlugin;
 impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
-            .init_resource::<PlayerToCameraAngle>()
-            .init_resource::<BallTime>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 spawn_player
@@ -93,7 +94,12 @@ pub enum PlayerSystems {
     PlayerSpeed,
     PlayerSteering,
     BallSpin,
-    Nitro
+    Nitro,
+    BallTime,
+    ControlInput,
+    ControlSettings,
+    PlayerToCameraAngle,
+    RespawnPoint
 )]
 pub struct Player;
 
@@ -171,13 +177,26 @@ pub fn player_collision_mask() -> LayerMask {
 /// The bug's skeleton file (`SKELETON_TYPE_ME`).
 pub const PLAYER_SKELETON: &str = "Skeletons/DoodleBug.skeleton.rsrc";
 
-/// The angle of the camera around the player, which makes the mouse
-/// controls camera-relative (`gPlayerToCameraAngle`). The camera updates it
-/// after the player moves.
-#[derive(Resource, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+/// The angle around the player of the camera that follows it, which makes
+/// the mouse controls camera-relative (`gPlayerToCameraAngle`). The camera
+/// updates it after the player moves.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
 pub struct PlayerToCameraAngle(pub f32);
 
-/// Puts the bug on the floor at the level's start.
+/// Where the player restarts after dying: the start, or the best
+/// checkpoint it has tagged (`gBestCheckPoint`, `gMostRecentCheckPointCoord`
+/// and `gCheckPointRot`).
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq)]
+pub struct RespawnPoint {
+    /// The highest checkpoint number reached, if any.
+    pub checkpoint: Option<u8>,
+    pub position: Vec3,
+    pub yaw: f32,
+}
+
+/// Puts the bug on the floor at the level's start. Ball time and the
+/// other inventory start full for now; carrying them over between levels
+/// arrives with the game flow.
 ///
 /// Port of `InitPlayerAtStartOfLevel` (original/src/Player/MyGuy.c) and
 /// `InitPlayer_Bug` (original/src/Player/Player_Bug.c).
@@ -194,6 +213,13 @@ fn spawn_player(
         .spawn((
             Name::new("Player"),
             Player,
+            LocalControls,
+            // Rounded down to a quarter turn (`InitPlayerAtStartOfLevel`).
+            RespawnPoint {
+                checkpoint: None,
+                position,
+                yaw: f32::from(start.aim / 2) * (TAU / 4.0),
+            },
             Transform::from_translation(position).with_rotation(Quat::from_rotation_y(start.yaw())),
             // The model is a child, which needs visibility to inherit.
             Visibility::default(),

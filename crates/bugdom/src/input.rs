@@ -1,10 +1,12 @@
 //! Game input: the original's key bindings, sampled every frame and handed
 //! to the fixed timestep.
 //!
-//! Devices are read in `PreUpdate`. A fixed tick sees a [`ControlInput`]
-//! snapshot: the actions held at the last frame, every press since the
-//! previous tick (so a press between ticks is not lost), and the mouse motion
-//! summed since the previous tick.
+//! Devices are read in `PreUpdate`. At the start of each fixed tick, every
+//! player that this machine's devices control ([`LocalControls`]) gets a
+//! [`ControlInput`] snapshot: the actions held at the last frame, every press
+//! since the previous tick (so a press between ticks is not lost), and the
+//! mouse motion summed since the previous tick. Each player carries its own
+//! input and [`ControlSettings`], so more players can be added later.
 //!
 //! Port of original/src/System/Input.c.
 
@@ -21,9 +23,7 @@ pub struct InputPlugin;
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<InputSampler>()
-            .init_resource::<ControlInput>()
             .init_resource::<InputEnabled>()
-            .init_resource::<ControlSettings>()
             .add_systems(
                 PreUpdate,
                 (capture_mouse, sample_input)
@@ -176,8 +176,8 @@ impl ActionSet {
     }
 }
 
-/// The control preferences (part of the original's `PrefsType`).
-#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
+/// A player's control preferences (part of the original's `PrefsType`).
+#[derive(Component, Debug, Clone, Default, PartialEq, Eq)]
 pub struct ControlSettings {
     /// The movement keys turn the bug and push it forward or back, rather
     /// than steering relative to the camera (`playerRelativeKeys`, off by
@@ -185,7 +185,12 @@ pub struct ControlSettings {
     pub player_relative_keys: bool,
 }
 
-/// Whether the player's controls read the devices. The debug fly camera
+/// A player controlled by this machine's keyboard, mouse and gamepad.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct LocalControls;
+
+/// Whether the devices are read for the players. The machine has one set
+/// of devices, so this is not per player. The debug fly camera
 /// turns this off while it uses the same keys.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq, Deref, DerefMut)]
 pub struct InputEnabled(pub bool);
@@ -196,8 +201,8 @@ impl Default for InputEnabled {
     }
 }
 
-/// What the devices said this frame, plus what has built up since the last
-/// fixed tick.
+/// What this machine's devices said this frame, plus what has built up since
+/// the last fixed tick.
 #[derive(Resource, Debug, Default)]
 struct InputSampler {
     held: ActionSet,
@@ -212,8 +217,8 @@ struct InputSampler {
     ignore_mouse_buttons: bool,
 }
 
-/// The input one fixed tick acts on.
-#[derive(Resource, Debug, Default, Clone)]
+/// The input a player acts on during one fixed tick.
+#[derive(Component, Debug, Default, Clone)]
 pub struct ControlInput {
     held: ActionSet,
     pressed: ActionSet,
@@ -438,15 +443,22 @@ fn sample_input(
     sampler.right_stick = stick(GamepadAxis::RightStickX, GamepadAxis::RightStickY);
 }
 
-/// Hands what has built up since the last tick to this tick.
-fn begin_tick(mut sampler: ResMut<InputSampler>, mut input: ResMut<ControlInput>) {
-    *input = ControlInput {
+/// Hands what has built up since the last tick to the locally controlled
+/// players for this tick.
+fn begin_tick(
+    mut sampler: ResMut<InputSampler>,
+    mut players: Query<&mut ControlInput, With<LocalControls>>,
+) {
+    let input = ControlInput {
         held: sampler.held,
         pressed: std::mem::take(&mut sampler.pressed),
         mouse_motion: std::mem::take(&mut sampler.mouse_motion),
         left_stick: sampler.left_stick,
         right_stick: sampler.right_stick,
     };
+    for mut player_input in &mut players {
+        *player_input = input.clone();
+    }
 }
 
 #[cfg(test)]
