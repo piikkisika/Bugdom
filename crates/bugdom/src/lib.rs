@@ -16,6 +16,7 @@ pub mod pause;
 pub mod physics;
 pub mod player;
 pub mod skeleton;
+pub mod splines;
 pub mod state;
 pub mod terrain;
 
@@ -43,6 +44,7 @@ impl Plugin for GamePlugin {
             objects::ObjectsPlugin,
             items::ItemsPlugin,
             fences::FencePlugin,
+            splines::SplinesPlugin,
             liquids::LiquidsPlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,

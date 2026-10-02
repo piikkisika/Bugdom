@@ -14,6 +14,7 @@ use crate::collision::{CollisionBoxes, CollisionKind};
 use crate::liquids::{Liquid, Underwater};
 use crate::math::yaw_of;
 use crate::player::PlayerSystems;
+use crate::splines::SplineSystems;
 use crate::state::AppState;
 use crate::terrain::TerrainMap;
 
@@ -22,6 +23,7 @@ pub(super) fn plugin(app: &mut App) {
         FixedUpdate,
         update_shadows
             .after(PlayerSystems::Move)
+            .after(SplineSystems::Move)
             .run_if(in_state(AppState::InGame)),
     );
 }
@@ -88,16 +90,25 @@ pub fn attach_shadow(
 fn update_shadows(
     map: Res<TerrainMap>,
     spatial: SpatialQuery,
-    owners: Query<(&Transform, Option<&CollisionBoxes>, Has<Underwater>), Without<Shadow>>,
+    owners: Query<
+        (
+            &Transform,
+            Option<&CollisionBoxes>,
+            Has<Underwater>,
+            Option<&Visibility>,
+        ),
+        Without<Shadow>,
+    >,
     blockers: Query<(&Transform, &CollisionBoxes, Option<&Liquid>), Without<Shadow>>,
     mut shadows: Query<(&Shadow, &ShadowOf, &mut Transform, &mut Visibility)>,
 ) {
     for (shadow, owner, mut transform, mut visibility) in &mut shadows {
-        let Ok((owner_transform, boxes, underwater)) = owners.get(owner.0) else {
+        let Ok((owner_transform, boxes, underwater, owner_visibility)) = owners.get(owner.0) else {
             continue;
         };
-        // No shadow in a liquid.
-        if underwater {
+        // No shadow in a liquid, nor for a hidden owner (such as a spline
+        // object out of range, whose `ShadowNode` the original detaches).
+        if underwater || owner_visibility == Some(&Visibility::Hidden) {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         }
