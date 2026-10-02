@@ -11,6 +11,7 @@
 //! [`RegisterItemKind::register_item_kind`] (the original's
 //! `gTerrainItemAddRoutines`).
 
+pub mod kind;
 mod scenery;
 mod triggers;
 

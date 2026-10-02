@@ -9,7 +9,8 @@ use std::f32::consts::{FRAC_PI_2, TAU};
 use avian3d::prelude::LayerMask;
 use bevy::prelude::*;
 
-use super::scenery::{StaticObject, item};
+use super::kind as item;
+use super::scenery::StaticObject;
 use super::{ItemSpawn, ItemSystems, RegisterItemKind};
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,

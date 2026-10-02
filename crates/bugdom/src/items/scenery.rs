@@ -10,6 +10,7 @@ use std::f32::consts::TAU;
 use avian3d::prelude::LayerMask;
 use bevy::prelude::*;
 
+use super::kind as item;
 use super::{DespawnOutOfRange, ItemSpawn, RegisterItemKind, TerrainItemSource};
 use crate::collision::{CollisionBox, CollisionKind, SolidSides, solid_object};
 use crate::level::{CurrentLevel, LevelType};
@@ -27,22 +28,6 @@ pub(super) fn plugin(app: &mut App) {
         .register_item_kind(item::COSMO, add_cosmo)
         .register_item_kind(item::POPPY, add_poppy)
         .register_item_kind(item::WALL_END, add_wall_end);
-}
-
-/// Item kinds, from the order of `gTerrainItemAddRoutines`
-/// (original/src/Terrain/Terrain2.c).
-pub(super) mod item {
-    pub const ROCK: u16 = 4;
-    pub const CLOVER: u16 = 5;
-    pub const GRASS: u16 = 6;
-    pub const WEED: u16 = 7;
-    pub const SUNFLOWER: u16 = 10;
-    pub const COSMO: u16 = 11;
-    pub const POPPY: u16 = 12;
-    pub const WALL_END: u16 = 13;
-    pub const CHECKPOINT: u16 = 32;
-    pub const LAWN_DOOR: u16 = 33;
-    pub const EXIT_LOG: u16 = 39;
 }
 
 /// Object types in the Lawn's second model file (`LAWN2_MObjType_*`).

@@ -11,6 +11,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use crate::collision::{CollisionBox, CollisionKind, SolidSides, solid_object};
+use crate::items::kind as item;
 use crate::items::{DespawnOutOfRange, ItemSpawn, RegisterItemKind, TerrainItemSource};
 use crate::level::{CurrentLevel, LevelType};
 use crate::state::{AppState, LevelAssets};
@@ -44,15 +45,6 @@ impl Plugin for LiquidsPlugin {
                 scroll_liquid_textures.run_if(in_state(AppState::InGame)),
             );
     }
-}
-
-/// Item kinds, from the order of `gTerrainItemAddRoutines`
-/// (original/src/Terrain/Terrain2.c).
-mod item {
-    pub const WATER_PATCH: u16 = 14;
-    pub const HONEY_PATCH: u16 = 27;
-    pub const SLIME_PATCH: u16 = 55;
-    pub const LAVA_PATCH: u16 = 56;
 }
 
 /// The kinds of liquid (`LIQUID_*`).

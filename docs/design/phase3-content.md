@@ -1,8 +1,7 @@
 # Phase 3 design: content
 
-Status: **draft, awaiting review**. Items marked **[review]** change the shared
-component vocabulary or differ from the original, so they need the owner's
-approval before the parallel work starts.
+Status: **approved** (2026-10-02). Items marked **[review]** change the
+shared component vocabulary or differ from the original.
 
 Milestone: every level is playable from start to finish.
 
