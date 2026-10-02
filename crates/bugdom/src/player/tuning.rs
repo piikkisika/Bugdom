@@ -99,6 +99,14 @@ pub struct BugTuning {
     /// How many times the walking friction slows the dead bug
     /// (`MovePlayerBug_Death`).
     pub death_friction_scale: f32,
+    /// How many times the super friction stops a kicking bug
+    /// (`MovePlayerBug_Kick`).
+    pub kick_friction_scale: f32,
+    /// A kicking bug turns toward the closest kickable object within this
+    /// distance, in units (`AimAtClosestKickableObject`).
+    pub kick_aim_range: f32,
+    /// How fast it turns toward it, in radians per second.
+    pub kick_aim_turn_rate: f32,
 }
 
 /// The ball's constants.
@@ -184,6 +192,9 @@ impl Default for PlayerTuning {
                 swim_jump_scale: 1.0 / 1.4,
                 drown_sink_speed: 30.0,
                 death_friction_scale: 5.0,
+                kick_friction_scale: 2.0,
+                kick_aim_range: 300.0,
+                kick_aim_turn_rate: 9.0,
             },
             ball: BallTuning {
                 motion: FormMotion {

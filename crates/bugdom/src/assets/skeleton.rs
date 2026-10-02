@@ -27,6 +27,10 @@ pub struct SkeletonAsset {
     /// One per bone: the inverse of a translation to the bone's bind-pose
     /// position (see `bugdom_formats::skin`).
     pub inverse_bindposes: Handle<SkinnedMeshInverseBindposes>,
+    /// Radius of the bounding sphere of the skeleton's geometry at scale 1
+    /// (`gSkeletonBoundingSpheres`), which, scaled, is how far objects keep
+    /// from fences.
+    pub radius: f32,
 }
 
 /// Loads `.skeleton.rsrc` files as [`SkeletonAsset`]s. Also reads the
@@ -67,6 +71,7 @@ impl AssetLoader for SkeletonLoader {
             .resolve_embed_str(&format!("{name}.3dmf"))?;
         let model = tdmf::parse(&load_context.read_asset_bytes(model_path).await?)?;
 
+        let radius = tdmf::BoundingSphere::of_meshes(&model.meshes).radius;
         let skinned = skin::bind(&definition, &model)?;
         // Only RootSwing relies on repeating UVs; every other skeleton clamps
         // to avoid seams at the edges of alpha-tested textures.
@@ -85,6 +90,7 @@ impl AssetLoader for SkeletonLoader {
             definition: Arc::new(definition),
             parts,
             inverse_bindposes,
+            radius,
         })
     }
 

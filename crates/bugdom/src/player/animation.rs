@@ -18,6 +18,7 @@ mod anim {
     pub const WALK: usize = 1;
     pub const ROLLUP: usize = 2;
     pub const UNROLL: usize = 3;
+    pub const KICK: usize = 4;
     pub const JUMP: usize = 5;
     pub const FALL: usize = 6;
     pub const LAND: usize = 7;
@@ -59,6 +60,7 @@ fn animation_for(state: BugState) -> usize {
         BugState::Walk => anim::WALK,
         BugState::RollUp => anim::ROLLUP,
         BugState::UnRoll => anim::UNROLL,
+        BugState::Kick => anim::KICK,
         BugState::Jump => anim::JUMP,
         BugState::Fall => anim::FALL,
         BugState::Land => anim::LAND,
@@ -77,12 +79,15 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
         (_, BugState::KnockedOnButt) => Some(3.0),
         (_, BugState::RollUp | BugState::UnRoll | BugState::Death) => None,
         (Some(BugState::UnRoll), BugState::Stand) => None,
+        // `MovePlayerBug_Kick` ends with `SetSkeletonAnim`.
+        (Some(BugState::Kick), BugState::Stand) => None,
         (None, _) => None,
         (_, BugState::Swim) => Some(5.0),
         (Some(BugState::Swim), BugState::Stand) => Some(5.0),
         (Some(BugState::Jump), BugState::Land) => Some(7.0),
         (_, BugState::Land) => Some(9.0),
         (_, BugState::Jump) => Some(9.0),
+        (_, BugState::Kick) => Some(9.0),
         (_, BugState::Walk) => Some(9.0),
         (_, BugState::Fall) => Some(4.0),
         (_, BugState::Stand) => Some(6.0),
@@ -141,6 +146,12 @@ mod tests {
         assert_eq!(morph_rate(Some(BugState::RollUp), BugState::UnRoll), None);
         assert_eq!(morph_rate(Some(BugState::UnRoll), BugState::Stand), None);
         assert_eq!(morph_rate(Some(BugState::Walk), BugState::Stand), Some(6.0));
+    }
+
+    #[test]
+    fn a_kick_blends_in_and_ends_at_once() {
+        assert_eq!(morph_rate(Some(BugState::Walk), BugState::Kick), Some(9.0));
+        assert_eq!(morph_rate(Some(BugState::Kick), BugState::Stand), None);
     }
 
     #[test]
