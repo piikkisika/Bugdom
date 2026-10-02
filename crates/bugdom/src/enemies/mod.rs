@@ -89,6 +89,7 @@
 //! [`EnemySystems::Move`] does). Despawning the root deletes the enemy
 //! (`DeleteEnemy`): its shadow and model go with it and the counts drop.
 
+pub mod ant;
 pub mod larva;
 
 use avian3d::prelude::{ColliderDisabled, CollisionLayers, LayerMask, TransformInterpolation};
@@ -157,7 +158,7 @@ impl Plugin for EnemiesPlugin {
             )
             .add_systems(FixedUpdate, apply_enemy_hurts.in_set(EnemySystems::Hurt));
         // The enemy kinds' plugins, one line each (at most 15 per tuple).
-        app.add_plugins((boxerfly::BoxerFlyPlugin, larva::LarvaPlugin));
+        app.add_plugins((ant::AntPlugin, boxerfly::BoxerFlyPlugin, larva::LarvaPlugin));
     }
 }
 
