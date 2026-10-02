@@ -29,7 +29,8 @@ the binary directly: development builds link Bevy dynamically.
 The game itself (`cargo run -p bugdom`) takes `BUGDOM_CAPTURE=/path/shot.png`
 the same way, plus `BUGDOM_LEVEL=<0-9>` to pick the level and
 `BUGDOM_CAMERA=x,y,z,yaw,pitch` to place the debug camera (world units and
-radians).
+radians), and `BUGDOM_WINDOW_SIZE=WxH` to set the window size;
+the xvfb screen size does not.
 
 ## Bevy
 - The Bevy version is pinned in the workspace `Cargo.toml` (0.19). Your
