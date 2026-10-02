@@ -9,6 +9,7 @@ pub mod dev;
 pub mod effects;
 pub mod enemies;
 pub mod fences;
+pub mod hud;
 pub mod input;
 pub mod items;
 pub mod level;
@@ -49,6 +50,7 @@ impl Plugin for GamePlugin {
             effects::EffectsPlugin,
             camera::CameraPlugin,
             skeleton::SkeletonPlugin,
+            hud::HudPlugin,
             dev::CapturePlugin,
         ));
         // Content: the player and what the level is made of.
