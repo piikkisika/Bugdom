@@ -69,7 +69,12 @@
 //! applies its friction ([`apply_friction`]) and gravity
 //! ([`ENEMY_GRAVITY`]), moves ([`move_enemy`]) and collides
 //! ([`EnemyCollision::collide`] with [`default_enemy_collision_mask`], or
-//! [`death_enemy_collision_mask`] for a dying one). Use `Query<EnemyBody,
+//! [`death_enemy_collision_mask`] for a dying one). The collision takes
+//! the kind's kill routine ([`KillRoutine`], or [`no_kill`]): a hurt it
+//! runs into is applied at once, and if it takes the last of the health
+//! the kill routine runs in the middle of the collision, as `KillEnemy`
+//! does. When the contact says [`EnemyContact::deleted`], the move ends.
+//! The same routine answers [`EnemyKilled`], for hurts other objects send. Use `Query<EnemyBody,
 //! With<AntBrain>>` for the parts the collision needs; `UpdateEnemy`'s
 //! speed is `velocity.length()`.
 //!
@@ -135,6 +140,7 @@ impl Plugin for EnemiesPlugin {
                     .chain()
                     .after(PlayerSystems::Move)
                     .before(EffectsSystems::MoveParticles)
+                    .before(PlayerSystems::Hurt)
                     .run_if(in_state(AppState::InGame)),
             )
             .configure_sets(
@@ -732,6 +738,7 @@ pub struct EnemyBody {
     pub ground: &'static mut GroundContact,
     pub underwater: Option<&'static Underwater>,
     pub radius: &'static BoundingRadius,
+    pub health: &'static mut Health,
 }
 
 /// What the world around an enemy is, for [`collide_enemy`].
@@ -770,23 +777,46 @@ pub struct EnemyContact {
     pub underwater: Option<Underwater>,
     /// The damage of each hurt the enemy took, in order: one per box of a
     /// `HurtEnemy` object it touched, then one for touching a hurting
-    /// particle.
+    /// particle. They have been taken off its health already.
     pub hurts: Vec<f32>,
+    /// A hurt left the enemy without health, and its kill routine ran.
+    pub killed: bool,
+    /// The kill routine deleted the enemy, so the collision stopped there
+    /// (`DoEnemyCollisionDetect` returning true).
+    pub deleted: bool,
+}
+
+/// An enemy kind's kill routine (`KillEnemy`'s switch), called in the
+/// middle of the collision when a hurt leaves the enemy without health. It
+/// gets the enemy's position and velocity as they are at that point
+/// (`gCoord`, `gDelta`) and returns whether it deleted the enemy. Kinds the
+/// original's switch has no case for pass [`no_kill`].
+pub type KillRoutine<'a> = &'a mut dyn FnMut(&mut Vec3, &mut Vec3) -> bool;
+
+/// The kill routine of kinds that `KillEnemy` ignores.
+pub fn no_kill(_: &mut Vec3, _: &mut Vec3) -> bool {
+    false
 }
 
 /// Collides a moving enemy with objects, particles, fences, the floor and
 /// the ceiling, moving `coord` and `velocity` out of what it hit.
 ///
-/// Port of `DoEnemyCollisionDetect` (original/src/Enemies/Enemy.c). The
-/// hurts it took are returned rather than applied, so the move goes on
-/// to the end where the original stops after a hurt that deleted the
-/// enemy; a deleted enemy's last move doesn't matter.
+/// Port of `DoEnemyCollisionDetect` (original/src/Enemies/Enemy.c). A hurt
+/// is applied where it happens (`EnemyGotHurt`): the damage comes off
+/// `health` and, if none is left, `kill` runs at once. If it deleted the
+/// enemy, the collision stops there, as in the original.
+///
+/// `ground` is the contact the enemy had before; like the original, only
+/// `on_ground` starts over (`on_terrain` stays set once set).
 pub fn collide_enemy(
     world: &EnemySurroundings,
     mover: &EnemyMover,
     coord: &mut Vec3,
     velocity: &mut Vec3,
+    health: &mut Health,
+    ground: GroundContact,
     mask: LayerMask,
+    kill: KillRoutine,
 ) -> EnemyContact {
     let box_mover = BoxMover {
         entity: mover.entity,
@@ -807,18 +837,30 @@ pub fn collide_enemy(
     let mut contact = EnemyContact {
         ground: GroundContact {
             on_ground: boxes.on_ground,
-            ..default()
+            ..ground
         },
+        boxes,
         ..default()
     };
+    // Port of `EnemyGotHurt`: true if the hurt deleted the enemy.
+    let mut hurt = |contact: &mut EnemyContact, coord: &mut Vec3, velocity: &mut Vec3, damage| {
+        contact.hurts.push(damage);
+        if health.lose(damage) {
+            contact.killed = true;
+            contact.deleted = kill(coord, velocity);
+        }
+        contact.deleted
+    };
 
-    for hit in &boxes.hits {
+    for hit in contact.boxes.hits.clone() {
         let Some(target) = world.candidates.get(hit.target) else {
             continue;
         };
         if target.kinds.has_all(CollisionKind::HurtEnemy) {
             let damage = world.candidate_damage.get(hit.target).copied();
-            contact.hurts.push(damage.unwrap_or(0.0));
+            if hurt(&mut contact, coord, velocity, damage.unwrap_or(0.0)) {
+                return contact;
+            }
         }
         if target.kinds.has_all(CollisionKind::Liquid)
             && let Some(volume) = target.boxes.first()
@@ -840,8 +882,9 @@ pub fn collide_enemy(
             mover.old_coord,
             ParticleFlags::HURT_ENEMY,
         )
+        && hurt(&mut contact, coord, velocity, PARTICLE_ENEMY_DAMAGE)
     {
-        contact.hurts.push(PARTICLE_ENEMY_DAMAGE);
+        return contact;
     }
 
     if let Some(fences) = world.fences {
@@ -880,8 +923,7 @@ pub fn collide_enemy(
 }
 
 /// The enemy collision as a system parameter: [`collide_enemy`] for an
-/// [`EnemyBody`], with the hurts sent as [`HurtEnemy`] and the liquid
-/// stored as [`Underwater`].
+/// [`EnemyBody`], with the liquid stored as [`Underwater`].
 ///
 /// It reads every [`Damage`] and [`Liquid`], so a system using it can't
 /// also write those.
@@ -893,7 +935,6 @@ pub struct EnemyCollision<'w, 's> {
     particles: Option<Res<'w, ParticleGroups>>,
     liquids: Query<'w, 's, &'static Liquid>,
     damages: Query<'w, 's, &'static Damage>,
-    hurts: MessageWriter<'w, HurtEnemy>,
     commands: Commands<'w, 's>,
 }
 
@@ -905,8 +946,17 @@ impl EnemyCollision<'_, '_> {
 
     /// Collides the enemy where its move left it, with the kinds in `mask`
     /// ([`default_enemy_collision_mask`] or
-    /// [`death_enemy_collision_mask`]). Port of `DoEnemyCollisionDetect`.
-    pub fn collide(&mut self, body: &mut EnemyBodyItem, mask: LayerMask) -> EnemyContact {
+    /// [`death_enemy_collision_mask`]), running `kill` if a hurt takes the
+    /// last of its health. Port of `DoEnemyCollisionDetect`.
+    ///
+    /// If [`EnemyContact::deleted`] is set, the move should end there, as
+    /// the original's move functions return when it returns true.
+    pub fn collide(
+        &mut self,
+        body: &mut EnemyBodyItem,
+        mask: LayerMask,
+        kill: KillRoutine,
+    ) -> EnemyContact {
         let candidates = &body.candidates.0;
         let candidate_damage: Vec<f32> = candidates
             .iter()
@@ -933,7 +983,19 @@ impl EnemyCollision<'_, '_> {
         };
         let mut coord = body.transform.translation;
         let mut velocity = **body.velocity;
-        let contact = collide_enemy(&world, &mover, &mut coord, &mut velocity, mask);
+        let contact = collide_enemy(
+            &world,
+            &mover,
+            &mut coord,
+            &mut velocity,
+            &mut body.health,
+            *body.ground,
+            mask,
+            kill,
+        );
+        if contact.deleted {
+            return contact;
+        }
 
         body.transform.translation = coord;
         **body.velocity = velocity;
@@ -945,11 +1007,6 @@ impl EnemyCollision<'_, '_> {
                 None => entity.remove::<Underwater>(),
             };
         }
-        self.hurts
-            .write_batch(contact.hurts.iter().map(|&damage| HurtEnemy {
-                enemy: body.entity,
-                damage,
-            }));
         contact
     }
 }
@@ -1235,7 +1292,10 @@ mod tests {
             &mover,
             coord,
             velocity,
+            &mut Health(1.0),
+            GroundContact::default(),
             default_enemy_collision_mask(),
+            &mut no_kill,
         )
     }
 
@@ -1313,6 +1373,103 @@ mod tests {
                 liquid: LiquidKind::Water
             })
         );
+    }
+
+    #[test]
+    fn a_fatal_hurt_kills_in_the_middle_of_the_collision() {
+        let map = TerrainMap::load_for_tests("Lawn", false);
+        let floor = map.floor_height(SPOT.x, SPOT.y);
+        let here = Vec3::new(SPOT.x, floor + 200.0, SPOT.y);
+        let around = CollisionBox::new(floor + 500.0, floor - 500.0, -100.0, 100.0, 100.0, -100.0)
+            .at(Vec3::new(SPOT.x, 0.0, SPOT.y));
+        let candidates = [
+            target(
+                1,
+                LayerMask::from(CollisionKind::HurtEnemy),
+                SolidSides::TOUCHABLE,
+                around,
+            ),
+            target(
+                2,
+                LayerMask::from(CollisionKind::Liquid),
+                SolidSides::TOUCHABLE,
+                around,
+            ),
+        ];
+        let world = EnemySurroundings {
+            map: &map,
+            fences: None,
+            particles: None,
+            candidates: &candidates,
+            candidate_damage: &[0.6, 0.0],
+            candidate_liquids: &[None, Some(LiquidKind::Water)],
+            dt: 1.0 / 60.0,
+        };
+        let mover = EnemyMover {
+            entity: Entity::PLACEHOLDER,
+            shape: CollisionBox::new(70.0, 0.0, -40.0, 40.0, 40.0, -40.0),
+            old_coord: here,
+            radius: 50.0,
+        };
+        let on_terrain = GroundContact {
+            on_terrain: true,
+            ..default()
+        };
+
+        // A kill that sends the enemy flying: the rest of the collision
+        // goes on with its new velocity.
+        let (mut coord, mut velocity, mut health) = (here, Vec3::ZERO, Health(0.5));
+        let mut kills = 0;
+        let mut fly = |_: &mut Vec3, v: &mut Vec3| {
+            kills += 1;
+            *v = Vec3::new(0.0, 900.0, 0.0);
+            false
+        };
+        let contact = collide_enemy(
+            &world,
+            &mover,
+            &mut coord,
+            &mut velocity,
+            &mut health,
+            on_terrain,
+            default_enemy_collision_mask(),
+            &mut fly,
+        );
+        assert_eq!(kills, 1);
+        assert!(contact.killed && !contact.deleted);
+        assert_eq!(velocity.y, 900.0);
+        assert!(contact.underwater.is_some());
+        assert!(contact.ground.on_terrain);
+
+        // A kill that deletes the enemy stops the collision there.
+        let (mut coord, mut velocity, mut health) = (here, Vec3::ZERO, Health(0.5));
+        let contact = collide_enemy(
+            &world,
+            &mover,
+            &mut coord,
+            &mut velocity,
+            &mut health,
+            GroundContact::default(),
+            default_enemy_collision_mask(),
+            &mut |_, _| true,
+        );
+        assert!(contact.deleted);
+        assert_eq!(contact.underwater, None);
+
+        // A hurt that leaves health kills nothing.
+        let (mut coord, mut velocity, mut health) = (here, Vec3::ZERO, Health(1.0));
+        let contact = collide_enemy(
+            &world,
+            &mover,
+            &mut coord,
+            &mut velocity,
+            &mut health,
+            GroundContact::default(),
+            default_enemy_collision_mask(),
+            &mut |_, _| panic!("not killed"),
+        );
+        assert!(!contact.killed);
+        assert!((health.0 - 0.4).abs() < 1e-6);
     }
 
     #[test]
