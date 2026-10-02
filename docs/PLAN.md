@@ -130,7 +130,7 @@ The original game is not built as part of this project.
 - [x] Terrain rendering (chunks, texture array material), fog, camera
 - [x] Fixed-timestep player controller (avian queries), skeletal animation
 - [x] Spawning terrain items, collision categories, triggers framework
-- **Milestone:** the player can walk, jump and roll in the Lawn level, and it feels the same as the reference (swimming is checked once Phase 3 adds liquids). Design: [`docs/design/phase2-engine-core.md`](design/phase2-engine-core.md)
+- **Milestone:** the player can walk, jump, roll and swim in the Lawn level, and it feels the same as the reference. Design: [`docs/design/phase2-engine-core.md`](design/phase2-engine-core.md)
 
 ### Phase 3: Content (parallel subagents in separate git worktrees)
 - [ ] 18 enemies (`Enemies/*.c`), each as its own plugin
