@@ -134,7 +134,14 @@ The original game is not built as part of this project.
 
 ### Phase 3: Content (parallel subagents in separate git worktrees)
 - [ ] 18 enemies (`Enemies/*.c`), each as its own plugin
-- [ ] Items, traps, triggers, liquids, effects/particles, dragonfly ride, spline objects
+- [ ] Items, traps, triggers, liquids, dragonfly ride, spline objects
+- [ ] Effects and particles (`Items/Effects.c`): first the particle groups and
+  the ripple and splash objects, then each effect on its own, so they can be
+  done in parallel. The engine already marks where these fire:
+  - water splashes (falling into water, jumping out) and swim ripples (`Player_Control.c`, `Player_Bug.c`)
+  - checkpoint sparks (`DoTrig_Checkpoint`)
+  - the ball's nitro trail (`LeaveNitroTrail`)
+  - lava burning the drowned bug (`gTorchPlayer`)
 - **Milestone:** every level is playable from start to finish
 
 ### Phase 4: Screens and polish
