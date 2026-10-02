@@ -163,6 +163,23 @@ impl TerrainItems {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TerrainItemSource(pub u32);
 
+/// Keeps an entity's map item from ever spawning again: the entity drops
+/// its [`TerrainItemSource`], and the item stays marked as in use
+/// (`theNode->TerrainItemPtr = nil`, as killed enemies and used-up items
+/// do).
+pub fn forget_terrain_item(entity: &mut EntityCommands) {
+    entity.queue(|mut entity: EntityWorldMut| {
+        let Some(TerrainItemSource(index)) = entity.take::<TerrainItemSource>() else {
+            return;
+        };
+        entity.world_scope(|world| {
+            if let Some(mut items) = world.get_resource_mut::<TerrainItems>() {
+                items.mark_in_use(index);
+            }
+        });
+    });
+}
+
 /// Despawns the entity once it leaves the item window (`TrackTerrainItem`).
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DespawnOutOfRange;

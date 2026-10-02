@@ -20,7 +20,7 @@ use super::{
 };
 use crate::camera::GameCamera;
 use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind, SolidSides, solid_object};
-use crate::items::{ItemSpawn, RegisterItemKind, TerrainItemSource, TerrainItems, kind};
+use crate::items::{ItemSpawn, RegisterItemKind, forget_terrain_item, kind};
 use crate::math::{quick_distance, turn_toward, yaw_forward, yaw_from_point_to_point};
 use crate::objects::Shadows;
 use crate::physics::{PreviousPosition, Velocity};
@@ -361,22 +361,6 @@ fn in_frustum_xz(frustum: &Frustum, center: Vec3, radius: f32) -> bool {
             .get(i)
             .is_none_or(|plane| plane.normal_d().dot(center) + radius > 0.0)
     })
-}
-
-/// Keeps a killed fly's map item from spawning it again: it drops its
-/// [`TerrainItemSource`], and the item stays marked as in use
-/// (`theNode->TerrainItemPtr = nil`).
-fn forget_terrain_item(fly: &mut EntityCommands) {
-    fly.queue(|mut fly: EntityWorldMut| {
-        let Some(TerrainItemSource(index)) = fly.take::<TerrainItemSource>() else {
-            return;
-        };
-        fly.world_scope(|world| {
-            if let Some(mut items) = world.get_resource_mut::<TerrainItems>() {
-                items.mark_in_use(index);
-            }
-        });
-    });
 }
 
 /// Kills a fly: it leaves its spline, stops counting as an enemy for
