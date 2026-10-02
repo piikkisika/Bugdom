@@ -118,6 +118,10 @@ use crate::splines::{OnSpline, SplineSystems, detach_from_spline};
 use crate::state::{AppState, LevelAssets};
 use crate::terrain::TerrainMap;
 
+mod caterpillar;
+mod crawling;
+mod slug;
+
 pub struct EnemiesPlugin;
 
 impl Plugin for EnemiesPlugin {
@@ -150,6 +154,7 @@ impl Plugin for EnemiesPlugin {
             .add_systems(FixedUpdate, apply_enemy_hurts.in_set(EnemySystems::Hurt));
         // The enemy kinds' plugins, one line each (at most 15 per tuple).
         // app.add_plugins((ant::AntPlugin,));
+        app.add_plugins((slug::SlugPlugin, caterpillar::CaterpillarPlugin));
     }
 }
 
