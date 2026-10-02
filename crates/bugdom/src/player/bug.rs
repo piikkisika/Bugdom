@@ -15,6 +15,7 @@ use super::effects::{
     PlayerEffects, SWIM_RIPPLE_INTERVAL, SWIM_RIPPLE_SCALE, Splash, SwimRipple, TorchFire,
 };
 use super::health::{DeferredKnock, Torched, kill_player};
+use super::held::{CARRIED_DROP, CarriedBy, EatenBy, player_layers};
 use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, PELVIS_JOINT, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::{BugTuning, Dying, Player, PlayerForm, PlayerModel, PlayerTuning};
@@ -51,6 +52,14 @@ pub enum BugState {
     KnockedOnButt,
     /// Killed, until the player starts again.
     Death,
+    /// In an enemy's mouth ([`EatenBy`]), until the player starts again.
+    BeingEaten,
+    /// Stung by a mosquito, until it lets go.
+    BloodSuck,
+    /// Caught in a spider's web, until it lets go.
+    Webbed,
+    /// Hanging under a firefly ([`CarriedBy`]), until it lets go.
+    Carried,
 }
 
 /// One tick of the bug's movement.
@@ -70,6 +79,8 @@ struct Bug<'a> {
     ripple_at: Option<Vec3>,
     /// A kick started this tick, so its animation flag starts clear.
     kick_started: bool,
+    /// Where the carrier is and its heading, while it carries the bug.
+    carrier: Option<(Vec3, f32)>,
 }
 
 /// Moves the player's bug for one tick.
@@ -87,9 +98,12 @@ pub fn move_bug(
             &mut SwimRipple,
             &mut TorchFire,
             Has<Torched>,
+            Option<&CarriedBy>,
+            Has<EatenBy>,
         ),
         With<Player>,
     >,
+    carriers: Query<&Transform, Without<Player>>,
     mut models: Query<
         (
             &SkeletonAnimator,
@@ -100,7 +114,7 @@ pub fn move_bug(
         Without<Player>,
     >,
 ) {
-    for (mut player, model, mut ripple, mut fire, torched) in &mut players {
+    for (mut player, model, mut ripple, mut fire, torched, carried_by, eaten) in &mut players {
         if *player.form != PlayerForm::Bug {
             continue;
         }
@@ -117,6 +131,9 @@ pub fn move_bug(
             ripple_timer: **ripple,
             ripple_at: None,
             kick_started: false,
+            carrier: carried_by
+                .and_then(|c| carriers.get(c.0).ok())
+                .map(|t| (t.translation, yaw_of(t.rotation))),
         };
         bug.tick();
 
@@ -159,6 +176,16 @@ pub fn move_bug(
         }
         if rolled_up {
             become_ball(&mut player);
+            // `InitPlayer_Ball` makes the player collidable again, even
+            // after a web left it out.
+            commands.entity(player.entity).insert(player_layers(true));
+        }
+        // Who held the bug is forgotten once it is out of the hold.
+        if carried_by.is_some() && state != BugState::Carried {
+            commands.entity(player.entity).remove::<CarriedBy>();
+        }
+        if eaten && state != BugState::BeingEaten {
+            commands.entity(player.entity).remove::<EatenBy>();
         }
         if drowned && !player.dying {
             commands.entity(player.entity).insert(Dying {
@@ -252,8 +279,13 @@ impl Bug<'_> {
             BugState::Swim => self.swim(),
             BugState::KnockedOnButt => self.knocked_on_butt(),
             BugState::Death => self.death(),
+            BugState::BeingEaten => {}
+            BugState::BloodSuck => self.blood_suck(),
+            BugState::Webbed => self.webbed(),
+            BugState::Carried => self.carried(),
         }
-        if !self.rolled_up {
+        // A held bug doesn't turn (`UpdatePlayer_Bug` isn't called).
+        if !self.rolled_up && !matches!(self.state, BugState::BeingEaten | BugState::Carried) {
             self.update();
         }
     }
@@ -435,6 +467,44 @@ impl Bug<'_> {
         self.move_and_collide(true);
     }
 
+    /// Port of `MovePlayerBug_BloodSuck`: no control, the bug slows to a
+    /// stop and loses ball time. The original also takes the player out of
+    /// others' collisions (`CType = 0`), which the hold does here.
+    fn blood_suck(&mut self) {
+        let tuning = &self.motion.tuning.bug;
+        self.motion.steering = Vec2::ZERO;
+        self.motion
+            .apply_friction_and_gravity(tuning.friction * tuning.blood_suck_friction_scale);
+        self.move_and_collide(true);
+        self.motion.ball_time_drained += tuning.blood_suck_ball_time_drain * self.motion.dt;
+    }
+
+    /// Port of `MovePlayerBug_Webbed`: no control, and the bug slows to a
+    /// stop. Its `CType = 0` is the hold's, as for the blood suck.
+    fn webbed(&mut self) {
+        let tuning = &self.motion.tuning.bug;
+        self.motion.steering = Vec2::ZERO;
+        self.motion
+            .apply_friction_and_gravity(tuning.friction * tuning.webbed_friction_scale);
+        self.move_and_collide(true);
+    }
+
+    /// Port of `MovePlayerBug_Carried`: the bug hangs under its carrier,
+    /// facing its way, and falls from a standstill once let go.
+    fn carried(&mut self) {
+        match self.carrier {
+            Some((at, yaw)) => {
+                self.motion.coord = at - Vec3::Y * CARRIED_DROP;
+                self.motion.yaw = yaw;
+            }
+            None => {
+                self.motion.velocity = Vec3::ZERO;
+                self.state = BugState::Fall;
+                self.fall();
+            }
+        }
+    }
+
     /// Sinks slowly; the bug starts again once the kill delay is over.
     /// Port of `DrownInLiquid`.
     fn drown(&mut self) {
@@ -556,6 +626,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         for tick in 0..ticks {
             if tick > 0 {
@@ -642,6 +713,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         bug.motion.candidate_damage = vec![0.25];
         bug.tick();
@@ -659,6 +731,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         bug.motion.candidate_damage = vec![1.0];
         bug.tick();
@@ -746,6 +819,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         // Faster than the bug may walk: the knock's speed isn't limited,
         // only slowed by friction, and the controls do nothing.
@@ -789,6 +863,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         for _ in 0..30 {
             bug.tick();
@@ -823,6 +898,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         for input in inputs {
             bug.motion = bug.motion.next_tick(input);
@@ -951,6 +1027,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         bug.tick();
         assert_eq!(bug.state, BugState::Kick);
@@ -967,6 +1044,7 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         bug.motion.coord.y += 300.0;
         bug.tick();
@@ -1005,8 +1083,107 @@ mod tests {
             ripple_timer: 0.0,
             ripple_at: None,
             kick_started: false,
+            carrier: None,
         };
         bug.tick();
         assert_eq!(bug.state, BugState::Stand);
+    }
+
+    /// A bug in `state` at the Lawn's start, with no input.
+    fn held_bug<'a>(
+        bench: &'a super::super::movement::bench::Bench,
+        input: &'a ControlInput,
+        animator: &'a SkeletonAnimator,
+        state: BugState,
+    ) -> Bug<'a> {
+        Bug {
+            motion: bench.motion(PlayerForm::Bug, input, &[]),
+            state,
+            animator,
+            rolled_up: false,
+            drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
+            kick_started: false,
+            carrier: None,
+        }
+    }
+
+    #[test]
+    fn a_carried_bug_hangs_under_its_carrier_and_falls_when_let_go() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &input, &animator, BugState::Carried);
+        let carrier = Vec3::new(START.x + 50.0, 2000.0, START.y - 30.0);
+        bug.carrier = Some((carrier, 1.25));
+        bug.motion.velocity = Vec3::new(100.0, -50.0, 0.0);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Carried);
+        assert_eq!(bug.motion.coord, carrier - Vec3::Y * CARRIED_DROP);
+        assert_eq!(bug.motion.yaw, 1.25);
+        // The controls do nothing.
+        assert_eq!(bug.motion.steering, Vec2::ZERO);
+
+        // Let go: it falls from a standstill, high above the floor.
+        bug.carrier = None;
+        bug.motion = bug.motion.next_tick(&input);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Fall);
+        assert_eq!(bug.motion.velocity.x, 0.0);
+        let gravity = bench.tuning.gravity * super::super::movement::bench::DT;
+        assert!((bug.motion.velocity.y + gravity).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_blood_suck_drains_ball_time_and_holds_the_bug_still() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[Action::Jump, Action::Kick]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &input, &animator, BugState::BloodSuck);
+        bug.motion.steering = Vec2::new(5.0, 5.0);
+        let mut drained = 0.0;
+        for _ in 0..60 {
+            bug.tick();
+            drained += bug.motion.ball_time_drained;
+            assert_eq!(bug.state, BugState::BloodSuck);
+            bug.motion = bug.motion.next_tick(&input);
+        }
+        // 0.1 of a full timer per second.
+        assert!((drained - 0.1).abs() < 1e-4, "{drained}");
+        assert_eq!(bug.motion.speed, 0.0);
+        assert_eq!(bug.motion.steering, Vec2::ZERO);
+    }
+
+    #[test]
+    fn webbing_stops_a_bug_ten_times_as_hard() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &input, &animator, BugState::Webbed);
+        bug.motion.velocity = Vec3::new(500.0, 0.0, 0.0);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Webbed);
+        let slowed = 500.0 - 6000.0 * super::super::movement::bench::DT;
+        assert!(
+            (bug.motion.speed - slowed).abs() < 1.0,
+            "{}",
+            bug.motion.speed
+        );
+        assert_eq!(bug.motion.ball_time_drained, 0.0);
+    }
+
+    #[test]
+    fn an_eaten_bug_doesnt_move_by_itself() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &input, &animator, BugState::BeingEaten);
+        let (coord, yaw) = (bug.motion.coord, bug.motion.yaw);
+        bug.motion.velocity = Vec3::new(500.0, 0.0, 0.0);
+        bug.tick();
+        assert_eq!(bug.state, BugState::BeingEaten);
+        assert_eq!((bug.motion.coord, bug.motion.yaw), (coord, yaw));
     }
 }

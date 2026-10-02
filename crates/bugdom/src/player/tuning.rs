@@ -99,6 +99,15 @@ pub struct BugTuning {
     /// How many times the walking friction slows the dead bug
     /// (`MovePlayerBug_Death`).
     pub death_friction_scale: f32,
+    /// How many times the walking friction slows a bug a mosquito is
+    /// sucking (`MovePlayerBug_BloodSuck`).
+    pub blood_suck_friction_scale: f32,
+    /// Ball time a bug loses each second while a mosquito sucks it, as a
+    /// fraction of a full timer (`MovePlayerBug_BloodSuck`).
+    pub blood_suck_ball_time_drain: f32,
+    /// How many times the walking friction slows a webbed bug
+    /// (`MovePlayerBug_Webbed`).
+    pub webbed_friction_scale: f32,
     /// How many times the super friction stops a kicking bug
     /// (`MovePlayerBug_Kick`).
     pub kick_friction_scale: f32,
@@ -192,6 +201,9 @@ impl Default for PlayerTuning {
                 swim_jump_scale: 1.0 / 1.4,
                 drown_sink_speed: 30.0,
                 death_friction_scale: 5.0,
+                blood_suck_friction_scale: 5.0,
+                blood_suck_ball_time_drain: 0.1,
+                webbed_friction_scale: 10.0,
                 kick_friction_scale: 2.0,
                 kick_aim_range: 300.0,
                 kick_aim_turn_rate: 9.0,
