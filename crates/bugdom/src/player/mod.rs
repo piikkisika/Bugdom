@@ -83,7 +83,6 @@ impl Plugin for PlayerPlugin {
                 (
                     health::count_down_invincibility,
                     bug::move_bug,
-                    kick::land_kicks,
                     ball::move_ball,
                     health::count_down_shield,
                     animation::animate_bug,
@@ -93,6 +92,18 @@ impl Plugin for PlayerPlugin {
                     .in_set(PlayerSystems::Move)
                     .after(SkeletonSystems::Advance)
                     .after(CollisionSystems::Gather)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            // `MovePlayerBug_Kick` aims and kicks before the bug moves; the
+            // kicked objects answer in between (`EnemySystems::Kicked`).
+            .add_systems(
+                FixedUpdate,
+                (bug::aim_and_kick, kick::land_kicks)
+                    .chain()
+                    .in_set(PlayerSystems::Kick)
+                    .after(SkeletonSystems::Advance)
+                    .after(CollisionSystems::Gather)
+                    .before(PlayerSystems::Move)
                     .run_if(in_state(AppState::InGame)),
             )
             // The original's objects hurt the player while they move, after
@@ -123,6 +134,9 @@ pub enum PlayerSystems {
     Spawn,
     /// Changes the player's form when asked to, each fixed tick.
     Morph,
+    /// The bug's kick, before it moves: aiming, and telling the kicked
+    /// objects.
+    Kick,
     /// Moves the player each fixed tick.
     Move,
     /// Applies the hurts other objects sent this tick, once everything has

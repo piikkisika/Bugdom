@@ -13,10 +13,10 @@ use super::ball::become_ball;
 use super::health::{DeferredKnock, kill_player};
 use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
-use super::{Dying, Player, PlayerForm, PlayerModel};
+use super::{BugTuning, Dying, Player, PlayerForm, PlayerModel, PlayerTuning};
 use crate::input::Action;
 use crate::liquids::LiquidKind;
-use crate::math::turn_toward;
+use crate::math::{turn_toward, yaw_of};
 use crate::skeleton::{AnimationFlags, SkeletonAnimator, SkeletonRig};
 
 /// What the bug is doing. The variants carry no data; anything a state needs
@@ -54,16 +54,8 @@ struct Bug<'a> {
     rolled_up: bool,
     /// A liquid has killed the bug.
     drowned: bool,
-    /// The kick animation has reached the frame where the foot lands
-    /// (`KickNow`).
-    kick_now: bool,
-    /// Where the kickable objects are, in x and z, for aiming the kick.
-    kickables: &'a [Vec2],
     /// A kick started this tick, so its animation flag starts clear.
     kick_started: bool,
-    /// The kick landed this tick, with the bug at this position and
-    /// heading.
-    kicked_from: Option<(Vec3, f32)>,
 }
 
 /// Moves the player's bug for one tick.
@@ -73,30 +65,15 @@ pub fn move_bug(
     mut commands: Commands,
     context: MotionContext,
     mut messages: PlayerMessages,
-    kickables: Kickables,
-    mut kicks: MessageWriter<KickLanded>,
     mut players: Query<(PlayerData, &PlayerModel), With<Player>>,
-    mut models: Query<
-        (
-            &SkeletonAnimator,
-            &mut AnimationFlags,
-            Option<&SkeletonRig>,
-            &Transform,
-        ),
-        Without<Player>,
-    >,
+    mut models: Query<(&SkeletonAnimator, &mut AnimationFlags), Without<Player>>,
 ) {
     for (mut player, model) in &mut players {
         if *player.form != PlayerForm::Bug {
             continue;
         }
-        let Ok((animator, mut flags, rig, model_transform)) = models.get_mut(model.0) else {
+        let Ok((animator, mut flags)) = models.get_mut(model.0) else {
             continue;
-        };
-        let kickable_positions = if *player.state == BugState::Kick {
-            kickables.positions()
-        } else {
-            Vec::new()
         };
         let mut bug = Bug {
             motion: context.motion(&player),
@@ -104,24 +81,12 @@ pub fn move_bug(
             animator,
             rolled_up: false,
             drowned: false,
-            kick_now: flags.0[KICK_NOW_FLAG],
-            kickables: &kickable_positions,
             kick_started: false,
-            kicked_from: None,
         };
         bug.tick();
 
-        if bug.kick_started || bug.kicked_from.is_some() {
+        if bug.kick_started {
             flags.0[KICK_NOW_FLAG] = false;
-        }
-        if let Some((coord, yaw)) = bug.kicked_from
-            && let Some(impact) = rig.and_then(|rig| kick_impact(rig, model_transform, coord, yaw))
-        {
-            kicks.write(KickLanded {
-                player: player.entity,
-                impact,
-                yaw,
-            });
         }
 
         let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
@@ -147,6 +112,76 @@ pub fn move_bug(
                 timer: context.tuning().kill_delay,
             });
         }
+    }
+}
+
+/// The start of `MovePlayerBug_Kick`, before the bug moves: it turns
+/// toward the closest kickable object (`AimAtClosestKickableObject`) and,
+/// on the animation's kick frame, kicks from where it stands (`DoBugKick`).
+/// The kicked objects answer before the bug moves, as in the original.
+///
+/// Port of original/src/Player/Player_Bug.c.
+pub(super) fn aim_and_kick(
+    time: Res<Time>,
+    tuning: Res<PlayerTuning>,
+    kickables: Kickables,
+    mut kicks: MessageWriter<KickLanded>,
+    mut players: Query<
+        (Entity, &mut Transform, &BugState, &PlayerForm, &PlayerModel),
+        With<Player>,
+    >,
+    mut models: Query<(&mut AnimationFlags, Option<&SkeletonRig>, &Transform), Without<Player>>,
+) {
+    let mut positions = None;
+    for (player, mut transform, state, form, model) in &mut players {
+        if *form != PlayerForm::Bug || *state != BugState::Kick {
+            continue;
+        }
+        let positions = positions.get_or_insert_with(|| kickables.positions());
+        let coord = transform.translation;
+        let yaw = aim_at_closest(
+            coord.xz(),
+            yaw_of(transform.rotation),
+            positions,
+            &tuning.bug,
+            time.delta_secs(),
+        );
+        transform.rotation = Quat::from_rotation_y(yaw);
+
+        let Ok((mut flags, rig, model_transform)) = models.get_mut(model.0) else {
+            continue;
+        };
+        if !flags.0[KICK_NOW_FLAG] {
+            continue;
+        }
+        flags.0[KICK_NOW_FLAG] = false;
+        if let Some(impact) = rig.and_then(|rig| kick_impact(rig, model_transform, coord, yaw)) {
+            kicks.write(KickLanded {
+                player,
+                impact,
+                yaw,
+            });
+        }
+    }
+}
+
+/// The heading after turning toward the closest kickable object, if it is
+/// in range. Port of `AimAtClosestKickableObject`.
+fn aim_at_closest(from: Vec2, yaw: f32, kickables: &[Vec2], tuning: &BugTuning, dt: f32) -> f32 {
+    let mut min_dist = 10_000_000.0;
+    let mut closest = None;
+    for &at in kickables {
+        let dist = from.distance(at);
+        if dist < min_dist {
+            min_dist = dist;
+            closest = Some(at);
+        }
+    }
+    match closest {
+        Some(target) if min_dist < tuning.kick_aim_range => {
+            turn_toward(yaw, from, target, tuning.kick_aim_turn_rate * dt).0
+        }
+        _ => yaw,
     }
 }
 
@@ -217,15 +252,10 @@ impl Bug<'_> {
         self.move_and_collide(true);
     }
 
-    /// Port of `MovePlayerBug_Kick`: the bug can't move, turns toward the
-    /// closest kickable object, kicks when the animation says so and
-    /// stands again when it ends.
+    /// Port of `MovePlayerBug_Kick`: the bug can't move and stands again
+    /// when the kick's animation ends. The aiming and the kick itself come
+    /// first, in [`aim_and_kick`], as in the original.
     fn kick(&mut self) {
-        self.aim_at_closest_kickable();
-        if self.kick_now {
-            self.kick_now = false;
-            self.kicked_from = Some((self.motion.coord, self.motion.yaw));
-        }
         if self.animator.has_stopped {
             self.state = BugState::Stand;
         }
@@ -233,27 +263,6 @@ impl Bug<'_> {
         self.motion
             .apply_friction_and_gravity(tuning.super_friction * tuning.kick_friction_scale);
         self.move_and_collide(true);
-    }
-
-    /// Turns toward the closest kickable object, if it is in range.
-    /// Port of `AimAtClosestKickableObject`.
-    fn aim_at_closest_kickable(&mut self) {
-        let m = &mut self.motion;
-        let from = m.coord.xz();
-        let mut min_dist = 10_000_000.0;
-        let mut closest = None;
-        for &at in self.kickables {
-            let dist = from.distance(at);
-            if dist < min_dist {
-                min_dist = dist;
-                closest = Some(at);
-            }
-        }
-        if let Some(target) = closest
-            && min_dist < m.tuning.bug.kick_aim_range
-        {
-            m.yaw = turn_toward(m.yaw, from, target, m.tuning.bug.kick_aim_turn_rate * m.dt).0;
-        }
     }
 
     /// Port of `MovePlayerBug_Jump`. Aiming at boppable enemies arrives with
@@ -462,10 +471,7 @@ mod tests {
             animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         for tick in 0..ticks {
             if tick > 0 {
@@ -548,10 +554,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         bug.motion.candidate_damage = vec![0.25];
         bug.tick();
@@ -565,10 +568,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         bug.motion.candidate_damage = vec![1.0];
         bug.tick();
@@ -652,10 +652,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         // Faster than the bug may walk: the knock's speed isn't limited,
         // only slowed by friction, and the controls do nothing.
@@ -695,10 +692,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         for _ in 0..30 {
             bug.tick();
@@ -729,10 +723,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         for input in inputs {
             bug.motion = bug.motion.next_tick(input);
@@ -803,7 +794,7 @@ mod tests {
     }
 
     #[test]
-    fn kicking_starts_on_the_ground_and_lands_on_the_flag() {
+    fn kicking_starts_on_the_ground() {
         let bench = Bench::lawn();
         let kick = ControlInput::for_tests(&[], &[Action::Kick]);
         let animator = SkeletonAnimator::default();
@@ -813,24 +804,11 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         bug.tick();
         assert_eq!(bug.state, BugState::Kick);
         assert!(bug.kick_started);
-        assert_eq!(bug.kicked_from, None);
-
-        // The animation's flag lands the kick where the bug is.
-        let idle = ControlInput::default();
-        bug.motion = bug.motion.next_tick(&idle);
-        bug.kick_now = true;
-        let at = (bug.motion.coord, bug.motion.yaw);
-        bug.tick();
-        assert_eq!(bug.kicked_from, Some(at));
-        assert_eq!(bug.state, BugState::Kick);
 
         // In the air there is no kick.
         let mut bug = Bug {
@@ -839,10 +817,7 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &[],
             kick_started: false,
-            kicked_from: None,
         };
         bug.motion.coord.y += 300.0;
         bug.tick();
@@ -850,49 +825,36 @@ mod tests {
     }
 
     #[test]
-    fn a_kicking_bug_turns_toward_the_closest_kickable_in_range() {
+    fn a_kick_aims_at_the_closest_kickable_in_range() {
+        let tuning = PlayerTuning::default().bug;
+        let dt = super::super::movement::bench::DT;
+        // Facing −Z; one object to the right in range, one farther away.
+        let kickables = [Vec2::new(200.0, 0.0), Vec2::new(-250.0, 0.0)];
+        let yaw = aim_at_closest(Vec2::ZERO, 0.0, &kickables, &tuning, dt);
+        // 9 radians per second toward +X, which is a turn to the right
+        // (negative yaw, wrapped).
+        let turned = std::f32::consts::TAU - 9.0 * dt;
+        assert!((yaw - turned).abs() < 1e-4, "{yaw}");
+        // Out of range: no turn.
+        let far = [Vec2::new(400.0, 0.0)];
+        assert_eq!(aim_at_closest(Vec2::ZERO, 0.0, &far, &tuning, dt), 0.0);
+    }
+
+    #[test]
+    fn a_kicking_bug_stands_up_when_the_animation_ends() {
         let bench = Bench::lawn();
         let idle = ControlInput::default();
         let mut stopped = SkeletonAnimator::default();
-        // Facing −Z; one object to the right in range, one farther away.
-        let kickables = [
-            START + Vec2::new(200.0, 0.0),
-            START + Vec2::new(-250.0, 0.0),
-        ];
-        let mut bug = Bug {
-            motion: bench.motion(PlayerForm::Bug, &idle, &[]),
-            state: BugState::Kick,
-            animator: &stopped,
-            rolled_up: false,
-            drowned: false,
-            kick_now: false,
-            kickables: &kickables,
-            kick_started: false,
-            kicked_from: None,
-        };
-        bug.tick();
-        // 9 radians per second toward +X, which is a turn to the right
-        // (negative yaw, wrapped).
-        let turned = std::f32::consts::TAU - 9.0 * super::super::movement::bench::DT;
-        assert!((bug.motion.yaw - turned).abs() < 1e-4, "{}", bug.motion.yaw);
-        assert_eq!(bug.state, BugState::Kick);
-
-        // Out of range: no turn. The ended animation stands the bug up.
         stopped.has_stopped = true;
-        let far = [START + Vec2::new(400.0, 0.0)];
         let mut bug = Bug {
             motion: bench.motion(PlayerForm::Bug, &idle, &[]),
             state: BugState::Kick,
             animator: &stopped,
             rolled_up: false,
             drowned: false,
-            kick_now: false,
-            kickables: &far,
             kick_started: false,
-            kicked_from: None,
         };
         bug.tick();
-        assert_eq!(bug.motion.yaw, 0.0);
         assert_eq!(bug.state, BugState::Stand);
     }
 }

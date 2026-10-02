@@ -39,11 +39,10 @@ impl Plugin for LarvaPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    // The player's collision bops and kicks before the
-                    // larvae move, as in the original's frame.
-                    (bop_larvae, kick_larvae, move_larvae)
-                        .chain()
-                        .in_set(EnemySystems::Move),
+                    kick_larvae.in_set(EnemySystems::Kicked),
+                    // The player's collision bops before the larvae move,
+                    // as in the original's frame.
+                    (bop_larvae, move_larvae).chain().in_set(EnemySystems::Move),
                     kill_larvae.in_set(EnemySystems::Killed),
                     move_larvae_on_spline.in_set(SplineSystems::Move),
                 ),

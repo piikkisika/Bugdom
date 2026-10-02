@@ -52,14 +52,10 @@ impl Plugin for AntPlugin {
             .add_systems(
                 FixedUpdate,
                 (
-                    // The player's collision and kick reach the ants
-                    // before they move, as in the original's frame.
-                    (
-                        kick_ants,
-                        ball_hit_ants,
-                        move_ants,
-                        items::move_thrown_items,
-                    )
+                    kick_ants.in_set(EnemySystems::Kicked),
+                    // The player's collision reaches the ants before they
+                    // move, as in the original's frame.
+                    (ball_hit_ants, move_ants, items::move_thrown_items)
                         .chain()
                         .in_set(EnemySystems::Move),
                     kill_hurt_ants.in_set(EnemySystems::Killed),

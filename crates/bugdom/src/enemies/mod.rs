@@ -161,6 +161,13 @@ impl Plugin for EnemiesPlugin {
             // `MoveParticleGroups`, all after the player has moved.
             .configure_sets(
                 FixedUpdate,
+                EnemySystems::Kicked
+                    .after(PlayerSystems::Kick)
+                    .before(PlayerSystems::Move)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .configure_sets(
+                FixedUpdate,
                 (EnemySystems::Move, EnemySystems::Hurt, EnemySystems::Killed)
                     .chain()
                     .after(PlayerSystems::Move)
@@ -201,6 +208,10 @@ impl Plugin for EnemiesPlugin {
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
 pub enum EnemySystems {
+    /// The kinds' [`EnemyKicked`] handlers. They run after the bug's kick
+    /// and before the player moves, as `DoBugKick` calls the kinds'
+    /// routines at the start of the player's move.
+    Kicked,
     /// The free-roaming enemies' move systems, and their handlers for the
     /// player's contact messages and the kick. It runs after the player
     /// has moved and before the spline objects and the particles move

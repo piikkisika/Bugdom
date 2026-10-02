@@ -119,10 +119,11 @@ impl Plugin for BoxerFlyPlugin {
             .register_spline_item_kind(kind::BOXERFLY, prime_boxer_fly)
             .add_systems(
                 FixedUpdate,
-                (kick_boxer_flies, ball_hit_boxer_flies, move_boxer_flies)
+                (ball_hit_boxer_flies, move_boxer_flies)
                     .chain()
                     .in_set(EnemySystems::Move),
             )
+            .add_systems(FixedUpdate, kick_boxer_flies.in_set(EnemySystems::Kicked))
             .add_systems(
                 FixedUpdate,
                 move_boxer_flies_on_spline.in_set(SplineSystems::Move),
