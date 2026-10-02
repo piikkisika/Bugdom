@@ -126,7 +126,7 @@ The original game is not built as part of this project.
   together (owner plays the original, Claude fixes differences) before Phase 1 is closed
 
 ### Phase 2: Engine core (main session, because it defines the shared component vocabulary)
-- [ ] Game states and the screen flow
+- [x] Game states and the screen flow
 - [x] Terrain rendering (chunks, texture array material), fog, camera
 - [x] Fixed-timestep player controller (avian queries), skeletal animation
 - [x] Spawning terrain items, collision categories, triggers framework

@@ -12,6 +12,7 @@ pub mod level;
 pub mod liquids;
 pub mod math;
 pub mod objects;
+pub mod pause;
 pub mod physics;
 pub mod player;
 pub mod skeleton;
@@ -33,6 +34,7 @@ impl Plugin for GamePlugin {
         app.insert_resource(math::GameRandom::from_seed(seed));
         app.add_plugins((
             state::StatePlugin,
+            pause::PausePlugin,
             physics::PhysicsPlugin,
             collision::CollisionPlugin,
             input::InputPlugin,

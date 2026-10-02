@@ -30,8 +30,15 @@ feels the same as the reference.
 ```text
 AppState:   Boot → Loading → InGame            (Phase 4 adds Title, MainMenu,
                                                   LevelIntro, Bonus, …)
-InGame sub-state (GameplayState): Playing | Paused | Dying
+InGame sub-state (GameplayState): Playing | Paused
 ```
+
+- Completing an area (`gAreaCompleted`) loads the next level; completing
+  the last one returns to `Boot` until the win screen exists. Holding the
+  backquote key and pressing F1 completes the area (`CheckForCheats`).
+- Pausing (Escape or the gamepad's Start) stops `Time<Virtual>`, so
+  `FixedUpdate` does not run. The pause menu waits for Phase 4; until then
+  the pause key resumes.
 
 - `CurrentLevel(LevelNum)` holds the resource that is `gRealLevel`. The
   loading screen reads it to pick the level's files.
@@ -45,9 +52,9 @@ InGame sub-state (GameplayState): Playing | Paused | Dying
   carries `DespawnOnExit(AppState::InGame)`, so `CleanupLevel` comes for free.
 - A debug start option (`BUGDOM_LEVEL=1` or a command-line argument) replaces
   the original's boot-time number keys until the menus exist.
-- `DoDeathReset` and `KILL_DELAY` become the `Dying` sub-state with a timer.
-  They are needed only once something can kill the player, so they arrive
-  with liquids or in Phase 3.
+- `DoDeathReset` and `KILL_DELAY` became a per-player `Dying` component
+  with a timer rather than a sub-state, so that each player can die on its
+  own. Lives and the game over arrive with the inventory in Phase 4.
 
 ## 3. Terrain
 

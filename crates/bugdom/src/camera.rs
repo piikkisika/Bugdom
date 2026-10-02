@@ -19,7 +19,7 @@ use crate::level::{
 };
 use crate::math::{quick_distance, yaw_from_point_to_point};
 use crate::player::{Player, PlayerRespawned, PlayerSystems, PlayerToCameraAngle};
-use crate::state::AppState;
+use crate::state::{AppState, CHEAT_KEY};
 use crate::terrain::{LayerKind, SUPERTILE_TILES, TILE_SIZE, TerrainMap};
 
 pub struct CameraPlugin;
@@ -466,7 +466,8 @@ fn toggle_fly_camera(
     mut enabled: ResMut<InputEnabled>,
     cameras: Query<(Entity, &Transform, Has<FlyCamera>), With<GameCamera>>,
 ) {
-    if keys.just_pressed(KeyCode::F1) {
+    // With the cheat key held, F1 completes the area instead.
+    if keys.just_pressed(KeyCode::F1) && !keys.pressed(CHEAT_KEY) {
         for (entity, transform, flying) in &cameras {
             if flying {
                 commands

@@ -16,7 +16,7 @@ use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions, PrimaryWindow};
 
-use crate::state::AppState;
+use crate::state::{AppState, GameplayState};
 
 pub struct InputPlugin;
 
@@ -28,13 +28,18 @@ impl Plugin for InputPlugin {
                 PreUpdate,
                 (capture_mouse, sample_input)
                     .chain()
+                    .in_set(GameInputSystems)
                     .after(InputSystems)
-                    .run_if(in_state(AppState::InGame)),
+                    .run_if(in_state(GameplayState::Playing)),
             )
             .add_systems(OnExit(AppState::InGame), release_mouse)
             .add_systems(FixedPreUpdate, begin_tick);
     }
 }
+
+/// Reads the devices for the players each frame, in `PreUpdate`.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct GameInputSystems;
 
 /// The game's actions (`kKey_*` in original/src/Headers/input.h).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -174,6 +179,10 @@ impl ActionSet {
     fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
     }
+
+    fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
 }
 
 /// A player's control preferences (part of the original's `PrefsType`).
@@ -204,8 +213,11 @@ impl Default for InputEnabled {
 /// What this machine's devices said this frame, plus what has built up since
 /// the last fixed tick.
 #[derive(Resource, Debug, Default)]
-struct InputSampler {
+pub struct InputSampler {
     held: ActionSet,
+    /// Actions that were down when the input was reset, which don't count
+    /// until they are released (`KEYSTATE_IGNOREHELD`).
+    ignored: ActionSet,
     /// Presses since the last fixed tick (`KEYSTATE_PRESSED`, latched).
     pressed: ActionSet,
     /// Mouse motion since the last fixed tick, in pixels.
@@ -215,6 +227,30 @@ struct InputSampler {
     /// Set when the mouse is captured, so that the click that captured it
     /// does not count as a press (`KEYSTATE_IGNOREHELD`).
     ignore_mouse_buttons: bool,
+}
+
+impl InputSampler {
+    /// Forgets everything that has built up, and ignores whatever is down
+    /// now until it is released, so that a key or button still held from a
+    /// menu does not act in the game. Port of `ResetInputState`.
+    pub fn reset(&mut self) {
+        self.ignored = self.ignored.union(self.held);
+        self.held = ActionSet::default();
+        self.pressed = ActionSet::default();
+        self.mouse_motion = Vec2::ZERO;
+        self.left_stick = Vec2::ZERO;
+        self.right_stick = Vec2::ZERO;
+        self.ignore_mouse_buttons = true;
+    }
+
+    /// Takes in which actions the devices hold this frame: new ones count as
+    /// presses, and ignored ones count again once released.
+    fn update_held(&mut self, down: ActionSet) {
+        self.ignored = self.ignored.intersection(down);
+        let held = down.difference(self.ignored);
+        self.pressed = self.pressed.union(held.difference(self.held));
+        self.held = held;
+    }
 }
 
 /// The input a player acts on during one fixed tick.
@@ -354,11 +390,10 @@ fn mouse_captured(cursor: &CursorOptions) -> bool {
     cursor.grab_mode != CursorGrabMode::None
 }
 
-/// Captures the mouse while the game has the player's attention, as
-/// `CaptureMouse` does: on a click in the window, and released with Escape.
+/// Captures the mouse again on a click in the window, after it was
+/// released by pausing or by leaving the window (`CaptureMouse`).
 fn capture_mouse(
     enabled: Res<InputEnabled>,
-    keys: Res<ButtonInput<KeyCode>>,
     buttons: Res<ButtonInput<MouseButton>>,
     mut sampler: ResMut<InputSampler>,
     mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>,
@@ -369,18 +404,21 @@ fn capture_mouse(
     let Ok(mut cursor) = cursors.single_mut() else {
         return;
     };
-    let captured = mouse_captured(&cursor);
-    if captured && keys.just_pressed(KeyCode::Escape) {
-        cursor.grab_mode = CursorGrabMode::None;
-        cursor.visible = true;
-    } else if !captured && buttons.get_just_pressed().next().is_some() {
-        cursor.grab_mode = CursorGrabMode::Locked;
-        cursor.visible = false;
+    if !mouse_captured(&cursor) && buttons.get_just_pressed().next().is_some() {
+        grab_mouse(&mut cursor);
         sampler.ignore_mouse_buttons = true;
     }
 }
 
-fn release_mouse(mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
+/// Hides and locks the cursor, so that mouse motion steers the player
+/// (`CaptureMouse(true)`).
+pub fn grab_mouse(cursor: &mut CursorOptions) {
+    cursor.grab_mode = CursorGrabMode::Locked;
+    cursor.visible = false;
+}
+
+/// Gives the cursor back (`CaptureMouse(false)`).
+pub fn release_mouse(mut cursors: Query<&mut CursorOptions, With<PrimaryWindow>>) {
     for mut cursor in &mut cursors {
         cursor.grab_mode = CursorGrabMode::None;
         cursor.visible = true;
@@ -401,12 +439,9 @@ fn sample_input(
         (window.focused, mouse_captured(cursor))
     });
     if !**enabled || !focused {
-        // `ResetInputState`: nothing counts as held, and keys held now must
-        // be released before they count again.
-        sampler.held = ActionSet::default();
-        sampler.mouse_motion = Vec2::ZERO;
-        sampler.left_stick = Vec2::ZERO;
-        sampler.right_stick = Vec2::ZERO;
+        // Keys held while the window was away must be released before they
+        // count again.
+        sampler.reset();
         return;
     }
 
@@ -425,9 +460,7 @@ fn sample_input(
             held.insert(binding.action);
         }
     }
-    let new_presses = held.difference(sampler.held);
-    sampler.pressed = sampler.pressed.union(new_presses);
-    sampler.held = held;
+    sampler.update_held(held);
 
     if captured {
         sampler.mouse_motion += motion.delta;
@@ -488,6 +521,22 @@ mod tests {
         input.mouse_motion = Vec2::new(300.0, 400.0);
         let capped = input.steering(1.0) / scale;
         assert!(capped.abs_diff_eq(Vec2::new(150.0, 200.0), 1e-3));
+    }
+
+    #[test]
+    fn keys_held_through_a_reset_count_once_released() {
+        let mut sampler = InputSampler::default();
+        let mut jump = ActionSet::default();
+        jump.insert(Action::Jump);
+        sampler.update_held(jump);
+        sampler.reset();
+        sampler.update_held(jump);
+        assert!(!sampler.held.contains(Action::Jump));
+        assert!(!sampler.pressed.contains(Action::Jump));
+        sampler.update_held(ActionSet::default());
+        sampler.update_held(jump);
+        assert!(sampler.held.contains(Action::Jump));
+        assert!(sampler.pressed.contains(Action::Jump));
     }
 
     #[test]
