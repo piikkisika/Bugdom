@@ -154,6 +154,26 @@ impl TerrainItems {
 #[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TerrainItemSource(pub u32);
 
+/// Makes the entity's map item stay in use after the entity goes, so that
+/// it never spawns again this level. Port of the kill routines'
+/// `TerrainItemPtr = nil` ("dont ever come back"), which keeps
+/// `DeleteObject` from freeing the item.
+pub fn forget_terrain_item(entity: &mut EntityCommands) {
+    entity.queue(|mut entity: EntityWorldMut| {
+        // Taking the source frees the item (`release_item`); take it back.
+        let Some(source) = entity.take::<TerrainItemSource>() else {
+            return;
+        };
+        entity.world_scope(|world| {
+            if let Some(mut items) = world.get_resource_mut::<TerrainItems>()
+                && let Some(in_use) = items.in_use.get_mut(source.0 as usize)
+            {
+                *in_use = true;
+            }
+        });
+    });
+}
+
 /// Despawns the entity once it leaves the item window (`TrackTerrainItem`).
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct DespawnOutOfRange;
@@ -504,6 +524,30 @@ mod tests {
     fn window() -> ItemWindow {
         let map = TerrainMap::load_for_tests("Lawn", false);
         ItemWindow::new(&map, 5, Vec2::new(12720.0, 15780.0))
+    }
+
+    #[test]
+    fn a_forgotten_item_stays_in_use() {
+        let item = Item {
+            x: 0,
+            z: 0,
+            kind: 0,
+            params: [0; 4],
+            flags: 0,
+        };
+        let mut world = World::new();
+        world.add_observer(release_item);
+        let mut items = TerrainItems::new(vec![item; 2]);
+        items.in_use = vec![true, true];
+        world.insert_resource(items);
+        let kept = world.spawn(TerrainItemSource(0)).id();
+        let freed = world.spawn(TerrainItemSource(1)).id();
+        forget_terrain_item(&mut world.commands().entity(kept));
+        world.flush();
+        assert!(!world.entity(kept).contains::<TerrainItemSource>());
+        world.despawn(kept);
+        world.despawn(freed);
+        assert_eq!(world.resource::<TerrainItems>().in_use, [true, false]);
     }
 
     #[test]
