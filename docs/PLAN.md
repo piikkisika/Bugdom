@@ -133,15 +133,55 @@ The original game is not built as part of this project.
 - **Milestone:** the player can walk, jump, roll and swim in the Lawn level, and it feels the same as the reference. Design: [`docs/design/phase2-engine-core.md`](design/phase2-engine-core.md)
 
 ### Phase 3: Content (parallel subagents in separate git worktrees)
-- [ ] 18 enemies (`Enemies/*.c`), each as its own plugin
-- [ ] Items, traps, triggers, dragonfly ride, spline objects
-- [ ] Effects and particles (`Items/Effects.c`): first the particle groups and
-  the ripple and splash objects, then each effect on its own, so they can be
-  done in parallel. The engine already marks where these fire:
-  - water splashes (falling into water, jumping out) and swim ripples (`Player_Control.c`, `Player_Bug.c`)
-  - checkpoint sparks (`DoTrig_Checkpoint`)
-  - the ball's nitro trail (`LeaveNitroTrail`)
-  - lava burning the drowned bug (`gTorchPlayer`)
+
+Design: [`docs/design/phase3-content.md`](design/phase3-content.md), which
+also lists the approved differences from the original.
+
+- [x] Shared foundations (wave 1, main session):
+  - [x] Splines: baking, the spline item registry, `OnSpline` movement and visibility
+  - [x] Particle groups, ripples and splashes, drawn in the original's order (water, ripples, glowing particles)
+  - [x] Level skeletons, `joint_position`, `box_query`
+  - [x] Player damage: `Health`, `Damage`, invincibility, shield, knock on butt, death, `HurtPlayer`, `KillPlayer`, the inventory; hurts land at the same point in the tick as in the original
+  - [x] Enemy base: counts, spawning (skeletons and plain models), collision with kill routines, hurt and kill messages, culling, nearest player
+  - [x] The kick, run before the player's move as in the original
+  - [x] Held-player states (`HoldPlayer`/`ReleasePlayer`): being eaten, carried, blood suck, webbed
+- [ ] 18 enemies (`Enemies/*.c`), each as its own plugin (every kind has its file in `enemies/`, empty until ported)
+  - [x] Ant (with spears, rocks and the ghost ant)
+  - [x] Boxer fly
+  - [x] Caterpillar and slug (shared crawling joints)
+  - [x] Flying bee
+  - [x] Larva
+  - [x] Pond fish (swallows the player through `HoldPlayer`)
+  - [x] Skippy
+  - [x] Tick (released by nuts)
+  - [x] Worker bee (with its stinger)
+  - [ ] Fire ant
+  - [ ] Firefly (carries the player: `Hold::Carried`)
+  - [ ] King ant (boss; add `BossHealthBar`)
+  - [ ] Mosquito (blood suck: `Hold::BloodSuck`). Note: when `KillMosquito`
+    kills a mosquito that is sucking, the original stands the bug up whatever
+    state it is in at that moment (if it is the bug, not the ball);
+    `ReleasePlayer` today only stands up a bug still in `BloodSuck`, so the
+    mosquito needs to do this itself.
+  - [ ] Queen bee (boss; add `BossHealthBar`; spawns larvae with `make_larva_enemy`)
+  - [ ] Roach (gas particles)
+  - [ ] Spider (web bullet and sphere: `Hold::Webbed`)
+- [ ] Items, traps, triggers, rides, spline objects (each package has its file in `items/`, empty until ported)
+  - [x] Scenery for every level type (rocks, grass, pond plants, dock, trees, wood posts, faucet, honey tubes)
+  - [x] Pickups: nuts and their contents, powerups, the ladybug cage, opening the lawn door
+  - [ ] Buddy bug: 14 nuts on the Lawn alone hold it (`SpawnBuddy` is sent, nothing answers it yet)
+  - [ ] Night doors (`add_lawn_door` still only spawns Lawn doors)
+  - [ ] Hive: honeycomb platform, firecracker, detonator (sets `DetonatorsBlown`), hive door, floor spike, shockwave
+  - [ ] Ant Hill: water valve, fire wall, ant pipes, king water pipe, root swing
+  - [ ] Traps: foot (spline), thorn bush, stump and its hive, rolling boulder
+  - [ ] Dragonfly ride and the bat (the bat eats the player with `Hold::Eaten { follow: true }`; the hive gets `BossHealthBar` on Dragonfly Attack)
+  - [ ] Water bug ride
+  - [ ] Shards (`QD3D_ExplodeGeometry`): nut shells, the cage, ticks and rocks just vanish for now
+- [x] Effects and particles (`Items/Effects.c`): the particle groups, ripples and splashes, then each effect:
+  - [x] water splashes (falling into water, jumping out) and swim ripples (`Player_Control.c`, `Player_Bug.c`)
+  - [x] checkpoint sparks (`DoTrig_Checkpoint`)
+  - [x] the ball's nitro trail (`LeaveNitroTrail`)
+  - [x] lava burning the drowned bug (`gTorchPlayer`)
 - **Milestone:** every level is playable from start to finish
 
 ### Phase 4: Screens and polish
