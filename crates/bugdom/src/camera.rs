@@ -324,7 +324,7 @@ fn follow_player(
     map: Res<TerrainMap>,
     mut camera_angle: ResMut<PlayerToCameraAngle>,
     players: Query<&Transform, (With<Player>, Without<GameCamera>)>,
-    mut cameras: Query<(&mut FollowCamera, &mut Transform), Without<FlyCamera>>,
+    mut cameras: Query<(&mut FollowCamera, &mut Transform), (With<GameCamera>, Without<FlyCamera>)>,
 ) {
     let Ok(player) = players.single() else {
         return;
