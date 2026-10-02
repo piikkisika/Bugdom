@@ -114,11 +114,11 @@ The original game is not built as part of this project.
 - [x] CI (fmt, clippy, docs, tests for non-Bevy crates; no full Bevy build)
 
 ### Phase 1: Data formats (parallel subagents, one per format)
-- [ ] Resource-fork reader
-- [ ] 3DMF parser → mesh, materials, textures
-- [ ] Skeleton (`.skeleton.rsrc` + `.3dmf`) → bones, joints, animations
-- [ ] Terrain (`.ter.rsrc`) → heightmap, tile map, item list, splines, fences
-- [ ] Sound banks (`.sounds`), AIFF music, TGA images
+- [x] Resource-fork reader
+- [x] 3DMF parser → mesh, materials, textures
+- [x] Skeleton (`.skeleton.rsrc` + `.3dmf`) → bones, joints, animations
+- [x] Terrain (`.ter.rsrc`) → heightmap, tile map, item list, splines, fences
+- [x] Sound banks (`.sounds`), AIFF music, TGA images
 - [ ] Bevy asset loaders
 - [ ] (If needed) headless data-dump tool built from the original loaders, for comparing parser output
 - **Milestone:** model and skeleton viewer (equivalent of `ModelDebug.c`)
