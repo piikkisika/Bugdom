@@ -140,6 +140,7 @@ The original game is not built as part of this project.
 ### Phase 4: Screens and polish
 - [ ] Infobar (on-screen HUD), title screen, menus, level intro, win/lose screen, bonus screen, high scores, settings
 - [ ] Sound effects and music, save games, input remapping and gamepad support
+- [ ] Per-player inventory that lasts beyond a level, so ball time (and later health, lives and keys) carries over between levels and into saved games, as in the original. Until then the player entity holds it and every level starts with a full ball timer.
 - [ ] Converter path and modding documentation
 
 ## Review points with the project owner
