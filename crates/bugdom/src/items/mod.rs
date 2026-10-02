@@ -13,8 +13,10 @@
 
 mod anthill;
 mod hive;
+mod honey_tube;
 pub mod kind;
 mod pickups;
+mod pond;
 mod scenery;
 mod traps;
 mod triggers;
@@ -62,7 +64,9 @@ impl Plugin for ItemsPlugin {
             .add_plugins((
                 anthill::plugin,
                 hive::plugin,
+                honey_tube::plugin,
                 pickups::plugin,
+                pond::plugin,
                 scenery::plugin,
                 traps::plugin,
                 triggers::plugin,
