@@ -25,7 +25,7 @@ use crate::fences::FenceKind;
 use crate::items::AreaCompleted;
 use crate::level::{CurrentLevel, GLOBAL_MODELS, NUM_LEVELS};
 use crate::liquids::LiquidKind;
-use crate::player::PLAYER_SKELETON;
+use crate::skeleton::SkeletonType;
 
 /// Environment variable that picks the starting level (0 to 9), standing in
 /// for the original's level-select cheat until the menus exist.
@@ -90,11 +90,23 @@ pub struct LevelAssets {
     pub terrain: Handle<TerrainAsset>,
     /// Global model files first, then the level type's.
     pub models: Vec<Handle<Model>>,
-    pub player_skeleton: Handle<SkeletonAsset>,
+    /// Every skeleton the level uses ([`crate::level::LevelDef::skeletons`]).
+    pub skeletons: Vec<(SkeletonType, Handle<SkeletonAsset>)>,
     /// The textures of the fence types the level type has (`PrimeFences`).
     pub fence_textures: Vec<(FenceKind, Handle<Image>)>,
     /// The textures of the liquids the level type has (`InitLiquids`).
     pub liquid_textures: Vec<(LiquidKind, Handle<Image>)>,
+}
+
+impl LevelAssets {
+    /// The skeleton of `kind`, or `None` if the level doesn't load it, as
+    /// the original only has the skeletons `LoadLevelArt` loaded.
+    pub fn skeleton(&self, kind: SkeletonType) -> Option<Handle<SkeletonAsset>> {
+        self.skeletons
+            .iter()
+            .find(|(k, _)| *k == kind)
+            .map(|(_, handle)| handle.clone())
+    }
 }
 
 fn starting_level() -> usize {
@@ -177,7 +189,11 @@ fn load_level_assets(mut commands: Commands, assets: Res<AssetServer>, level: Re
     commands.insert_resource(LevelAssets {
         terrain: assets.load(original_path(def.terrain)),
         models,
-        player_skeleton: assets.load(original_path(PLAYER_SKELETON)),
+        skeletons: def
+            .skeletons()
+            .into_iter()
+            .map(|kind| (kind, assets.load(original_path(&kind.path()))))
+            .collect(),
         fence_textures: FenceKind::on_level(def.level_type)
             .iter()
             .map(|kind| (*kind, assets.load(original_path(&kind.texture_path()))))
@@ -200,7 +216,7 @@ fn finish_loading(
 ) {
     let handles = std::iter::once(level_assets.terrain.id().untyped())
         .chain(level_assets.models.iter().map(|h| h.id().untyped()))
-        .chain(std::iter::once(level_assets.player_skeleton.id().untyped()))
+        .chain(level_assets.skeletons.iter().map(|(_, h)| h.id().untyped()))
         .chain(
             level_assets
                 .fence_textures
