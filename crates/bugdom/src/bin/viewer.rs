@@ -209,6 +209,9 @@ fn respawn_subject(
     mut animators: Query<(&mut SkeletonAnimator, &Skeleton)>,
     mut orbits: Query<&mut Orbit>,
     mut shown: Local<Option<(Mode, usize, usize)>>,
+    // Keeps the model file loaded: dropping the last strong handle while it
+    // is loading would cancel the load.
+    mut model_handle: Local<Option<Handle<Model>>>,
 ) {
     let current = (selection.mode, selection.file, selection.item);
     if *shown == Some(current) {
@@ -253,6 +256,7 @@ fn respawn_subject(
             };
             let handle: Handle<Model> =
                 assets.load(format!("{ORIGINAL_SOURCE}://Models/{name}.3dmf"));
+            *model_handle = Some(handle.clone());
             // Wait for the model so the object number can wrap.
             let Some(model) = models.get(&handle) else {
                 return;
