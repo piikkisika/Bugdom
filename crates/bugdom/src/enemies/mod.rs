@@ -645,6 +645,13 @@ impl<'w, 's> EnemySpawner<'w, 's> {
         &self.counts
     }
 
+    /// The model spawner, for an enemy's extra parts (a spear, a stinger)
+    /// spawned in the same system. A system can't hold its own
+    /// `ModelSpawner` next to this one.
+    pub fn models(&mut self) -> &mut ModelSpawner<'w> {
+        &mut self.models
+    }
+
     pub fn map(&self) -> &TerrainMap {
         &self.map
     }
