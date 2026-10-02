@@ -1,0 +1,13 @@
+# Rust build output
+/target/
+
+# Converted assets (generated)
+/assets/converted/
+
+# Reference C build
+/build-reference*/
+
+# IDEs / OS
+.vscode/
+.idea/
+.DS_Store
