@@ -21,10 +21,14 @@ use crate::assets::model::Model;
 use crate::assets::original_path;
 use crate::assets::skeleton::SkeletonAsset;
 use crate::assets::terrain::TerrainAsset;
+use crate::combat::Health;
 use crate::fences::FenceKind;
+use crate::hud::InfobarArt;
+use crate::input::LocalControls;
 use crate::items::AreaCompleted;
 use crate::level::{CurrentLevel, GLOBAL_MODELS, NUM_LEVELS};
 use crate::liquids::LiquidKind;
+use crate::player::{BallTime, DoorKey, Inventory, PLAYER_MAX_HEALTH};
 use crate::skeleton::SkeletonType;
 
 /// Environment variable that picks the starting level (0 to 9), standing in
@@ -40,6 +44,11 @@ const FINAL_LEVEL: usize = NUM_LEVELS - 1;
 pub const CHEAT_KEY: KeyCode = KeyCode::Backquote;
 /// With [`CHEAT_KEY`], completes the area.
 const COMPLETE_AREA_CHEAT: KeyCode = KeyCode::F1;
+/// With [`CHEAT_KEY`], held: full health, full ball time, and all the keys
+/// and a coin per frame.
+const HEALTH_CHEAT: KeyCode = KeyCode::F3;
+const BALL_TIME_CHEAT: KeyCode = KeyCode::F4;
+const INVENTORY_CHEAT: KeyCode = KeyCode::F5;
 
 pub struct StatePlugin;
 
@@ -56,6 +65,10 @@ impl Plugin for StatePlugin {
                 (complete_area_cheat, end_area)
                     .chain()
                     .run_if(in_state(GameplayState::Playing)),
+            )
+            .add_systems(
+                Update,
+                inventory_cheats.run_if(in_state(GameplayState::Playing)),
             );
     }
 }
@@ -137,12 +150,43 @@ fn start_game(mut level: ResMut<CurrentLevel>, mut next: ResMut<NextState<AppSta
 /// Completes the area when the cheat keys are pressed.
 ///
 /// Port of the `F1` cheat in `CheckForCheats` (original/src/System/Main.c).
-/// The other cheats (shield, health, ball time) arrive with what they fill
-/// up. Unlike the original's debug builds, the cheat key must always be
-/// held, because `F1` alone toggles the debug fly camera.
+/// `F3` to `F5` are [`inventory_cheats`]; the shield (`F2`), liquid (`F6`)
+/// and hurt (`F7`) cheats are not ported yet. Unlike the original's debug
+/// builds, the cheat key must always be held, because `F1` alone toggles
+/// the debug fly camera.
 fn complete_area_cheat(keys: Res<ButtonInput<KeyCode>>, mut completed: ResMut<AreaCompleted>) {
     if keys.pressed(CHEAT_KEY) && keys.just_pressed(COMPLETE_AREA_CHEAT) {
         **completed = true;
+    }
+}
+
+/// Fills up the local players' health, ball time and inventory while the
+/// cheat keys are held.
+///
+/// Port of the `F3`, `F4` and `F5` cheats in `CheckForCheats`
+/// (original/src/System/Main.c). As there, they act on every frame the
+/// keys are held, so `F5` adds a coin each frame.
+fn inventory_cheats(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut players: Query<(&mut Health, &mut BallTime, &mut Inventory), With<LocalControls>>,
+) {
+    if !keys.pressed(CHEAT_KEY) {
+        return;
+    }
+    for (mut health, mut ball_time, mut inventory) in &mut players {
+        if keys.pressed(HEALTH_CHEAT) {
+            // `GetHealth(1.0)`.
+            health.gain(1.0, PLAYER_MAX_HEALTH);
+        }
+        if keys.pressed(BALL_TIME_CHEAT) {
+            *ball_time = BallTime(1.0);
+        }
+        if keys.pressed(INVENTORY_CHEAT) {
+            inventory.get_money();
+            for key in DoorKey::ALL {
+                inventory.get_key(key);
+            }
+        }
     }
 }
 
@@ -210,6 +254,7 @@ fn load_level_assets(mut commands: Commands, assets: Res<AssetServer>, level: Re
 
 fn finish_loading(
     level_assets: Res<LevelAssets>,
+    infobar_art: Res<InfobarArt>,
     assets: Res<AssetServer>,
     mut next: ResMut<NextState<AppState>>,
     mut exit: MessageWriter<AppExit>,
@@ -228,8 +273,10 @@ fn finish_loading(
                 .liquid_textures
                 .iter()
                 .map(|(_, h)| h.id().untyped()),
-        );
-    let mut ready = true;
+        )
+        .chain(infobar_art.ids());
+    // The infobar's art also has to be adapted for drawing.
+    let mut ready = infobar_art.is_ready();
     for id in handles {
         if let Some(bevy::asset::LoadState::Failed(error)) = assets.get_load_state(id) {
             // A level can't run without its data.

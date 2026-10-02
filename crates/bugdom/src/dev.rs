@@ -15,6 +15,10 @@ pub const CAPTURE_ENV: &str = "BUGDOM_CAPTURE";
 /// `x,y,z,yaw,pitch`, in world units and radians.
 pub const CAMERA_ENV: &str = "BUGDOM_CAMERA";
 
+/// Environment variable that sets the window's size for a capture:
+/// `<width>x<height>`, in physical pixels, e.g. `640x480`.
+pub const WINDOW_SIZE_ENV: &str = "BUGDOM_WINDOW_SIZE";
+
 /// Real time to wait after the level starts, so that shaders and textures
 /// are ready before the screenshot.
 const CAPTURE_DELAY_SECS: f32 = 2.0;
@@ -33,6 +37,15 @@ impl Plugin for CapturePlugin {
                 frames_since_taken: None,
             })
             .add_systems(Update, capture.run_if(in_state(AppState::InGame)));
+        }
+        if let Ok(value) = std::env::var(WINDOW_SIZE_ENV) {
+            match parse_window_size(&value) {
+                Some(size) => {
+                    app.insert_resource(WindowSize(size))
+                        .add_systems(Startup, set_window_size);
+                }
+                None => warn!("{WINDOW_SIZE_ENV}={value} is not <width>x<height>"),
+            }
         }
         if let Ok(value) = std::env::var(CAMERA_ENV) {
             match parse_camera(&value) {
@@ -77,6 +90,24 @@ fn capture(
                 exit.write(AppExit::Success);
             }
         }
+    }
+}
+
+/// A window size from [`WINDOW_SIZE_ENV`].
+#[derive(Resource, Debug, Clone, Copy)]
+struct WindowSize(UVec2);
+
+fn parse_window_size(value: &str) -> Option<UVec2> {
+    let (width, height) = value.split_once('x')?;
+    let size = UVec2::new(width.trim().parse().ok()?, height.trim().parse().ok()?);
+    (size.min_element() > 0).then_some(size)
+}
+
+fn set_window_size(size: Res<WindowSize>, mut windows: Query<&mut Window>) {
+    for mut window in &mut windows {
+        window
+            .resolution
+            .set_physical_resolution(size.0.x, size.0.y);
     }
 }
 
