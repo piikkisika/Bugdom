@@ -1,7 +1,15 @@
 # Phase 4 design: the in-game HUD (infobar)
 
-Status: **draft**, for review. Items marked **[review]** need the owner's
-approval.
+Status: **approved** (2026-10-02), as drafted, with these decisions:
+
+- The boss bar follows a shared `BossHealthBar { full }` component (§8).
+- **Responsive positioning where possible, keeping the original layout.**
+  The bars, the band between them and the elements are laid out with
+  nested flex nodes (§4.1), rather than every element at absolute
+  640×480 coordinates.
+- **Idiomatic Bevy UI over the C mechanics.** The original's compositing
+  texture, `DrawSprite`/`EraseSprite` and `gInfobarUpdateBits` are not
+  replicated; what they draw is. Option B (§4) is dropped.
 
 Milestone: every level shows the original's infobar. It updates during
 play and scales to any window.
@@ -160,6 +168,31 @@ HUD can't target the 3D camera once that camera is clipped to the band.
   (`GlobalZIndex`), because the original draws `Render_DrawFadeOverlay`
   after `SubmitInfobarOverlay`.
 
+### 4.1 Responsive layout (owner's decision)
+
+The original's look is kept: the same art, the same places on it, the
+same proportions at 4:3. How the nodes get there is Bevy's:
+
+- **Screen.** A root node fills the HUD camera's view as a column: the top
+  bar, the game band (`flex_grow: 1`) and the bottom bar. The bars' heights
+  are their share of the window height (62/480 and 60/480), and they span
+  the full width, which gives the source port's widescreen stretch.
+- **The 3D view follows the layout.** `fit_game_view` sets the game
+  camera's viewport from the band node's computed size and position
+  (`ComputedNode`, `UiGlobalTransform`), so the band is defined in one
+  place. It keeps the original's rounding, which avoids a seam.
+- **Elements live in their bar.** Each element is a child of its bar,
+  positioned in percentages of that bar's size, so it stays on its spot
+  of the background art at any window size. Positions come from the
+  original's coordinates, converted once by a helper.
+- **Flex where the art allows.** Groups that are only a row of repeated
+  sprites, such as the ladybugs and the lives, are flex rows with a gap,
+  not one computed position per sprite. Text-like numbers are a row of
+  digit images.
+- **No dirty-rectangle logic.** Each element is its own node. A value
+  change sets an image or a size, and Bevy redraws. Hiding is
+  `Visibility::Hidden` or `Display::None`.
+
 ## 5. Scaling and aspect ratio **[review]**
 
 - **Default: stretch, as the source port does.** Every element is a
@@ -254,15 +287,11 @@ The systems run in `Update`, in `HudSystems::Refresh`, while in
     does.
 - **Loading.** `InfobarArt` loads at startup, as `LoadInfobarArt` loads at
   boot. `finish_loading` should also wait for it: one line in `state.rs`.
-- **Boss reference.** **[review]** `enemies::Bosses` holds the queen bee
-  and the king ant, but not the hive, and the HUD would also need their
-  full health of 7 and 5.
-  - Proposed: a generic `BossHealthBar { full: f32 }` component on
-    whatever the bar follows. The queen bee and king ant plugins and the
-    hive item each add it, and the HUD shows `Health / full`. It is a new
-    shared component.
-  - Alternative: add `hive` to `Bosses`, and have the HUD import each
-    boss's maximum health.
+- **Boss reference (decided).** A generic `BossHealthBar { full: f32 }`
+  component goes on whatever the bar follows. The queen bee and king ant
+  plugins and the hive item each add it, and the HUD shows
+  `Health / full`. It is a new shared component, defined in `combat.rs`
+  next to `Health`, so Phase 3 packages can add it before the HUD exists.
 - **Cheats.** Of `CheckForCheats`, only F1 is ported. F3 (health), F4 (ball
   time) and F5 (keys and money) would let the screenshot checks exercise
   the HUD before the Phase 3 pickups exist.

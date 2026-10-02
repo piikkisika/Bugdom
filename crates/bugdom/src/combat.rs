@@ -46,6 +46,15 @@ impl Health {
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
 pub struct Damage(pub f32);
 
+/// The infobar's boss bar follows this entity's [`Health`], drawn as a
+/// share of `full` (`ShowBossHealth`, original/src/Screens/Infobar.c). The
+/// queen bee, the king ant and the hive on Dragonfly Attack carry it.
+#[derive(Component, Debug, Clone, Copy, PartialEq)]
+pub struct BossHealthBar {
+    /// The health at which the bar is full.
+    pub full: f32,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
