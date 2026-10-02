@@ -141,6 +141,15 @@ impl TerrainItems {
         Self { items, in_use }
     }
 
+    /// Marks an item as spawned, so that it isn't spawned again. An entity
+    /// that drops its [`TerrainItemSource`] and then calls this keeps its
+    /// item from ever coming back (`TerrainItemPtr = nil`).
+    pub fn mark_in_use(&mut self, index: u32) {
+        if let Some(in_use) = self.in_use.get_mut(index as usize) {
+            *in_use = true;
+        }
+    }
+
     /// Sets bits in an item's flags, which outlive its entity.
     pub fn set_flags(&mut self, index: u32, flags: u16) {
         if let Some(item) = self.items.get_mut(index as usize) {
