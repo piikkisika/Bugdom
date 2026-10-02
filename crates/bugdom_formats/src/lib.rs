@@ -8,6 +8,7 @@ mod error;
 mod four_cc;
 pub mod mac_roman;
 pub mod rsrc;
+pub mod skeleton;
 
 pub use error::{Error, Result, ResultExt};
 pub use four_cc::FourCC;
