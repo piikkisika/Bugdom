@@ -30,7 +30,7 @@ pub use contact::{
 };
 pub use health::{
     HurtOutcome, HurtPlayer, INVINCIBILITY_DURATION, INVINCIBILITY_DURATION_DEATH, InvincibleTimer,
-    KNOCK_RISE_SPEED, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
+    KNOCK_RISE_SPEED, KillPlayer, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
 };
 pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
@@ -54,6 +54,7 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<PlayerTuning>()
             .add_message::<PlayerRespawned>()
             .add_message::<HurtPlayer>()
+            .add_message::<KillPlayer>()
             .add_message::<TouchedEnemy>()
             .add_message::<BallHitEnemy>()
             .add_message::<EnemyBopped>()
@@ -99,7 +100,8 @@ impl Plugin for PlayerPlugin {
             // have moved keeps them within the same tick.
             .add_systems(
                 FixedUpdate,
-                health::hurt_players
+                (health::hurt_players, health::kill_players)
+                    .chain()
                     .in_set(PlayerSystems::Hurt)
                     .after(PlayerSystems::Move)
                     .before(PlayerSystems::Respawn)

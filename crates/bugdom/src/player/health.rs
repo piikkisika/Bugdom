@@ -97,6 +97,17 @@ impl HurtPlayer {
     }
 }
 
+/// Kills a player outright (`KillPlayer`), as the pond fish does when it
+/// swallows the bug. Applied with the other objects' hurts, in
+/// [`PlayerSystems::Hurt`](super::PlayerSystems::Hurt).
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KillPlayer {
+    pub player: Entity,
+    /// Play the bug's death (`changeAnims`). Without it the player only
+    /// counts as dead, and whatever killed it decides how it looks.
+    pub change_anims: bool,
+}
+
 /// What a [`HurtPlayer`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HurtOutcome {
@@ -197,6 +208,32 @@ pub(super) fn hurt_players(
             }
         }
         // Sound: EFFECT_OUCH at the player.
+    }
+}
+
+/// Applies [`KillPlayer`] messages. Port of `KillPlayer`
+/// (original/src/Player/MyGuy.c).
+pub(super) fn kill_players(
+    mut kills: MessageReader<KillPlayer>,
+    tuning: Res<PlayerTuning>,
+    mut commands: Commands,
+    mut players: Query<PlayerData, With<Player>>,
+) {
+    let mut killed = EntityHashSet::default();
+    for kill in kills.read() {
+        let Ok(mut player) = players.get_mut(kill.player) else {
+            continue;
+        };
+        if player.dying || !killed.insert(player.entity) {
+            continue;
+        }
+        if kill.change_anims {
+            kill_player(&mut player, &mut commands, tuning.kill_delay);
+        } else {
+            commands.entity(player.entity).insert(Dying {
+                timer: tuning.kill_delay,
+            });
+        }
     }
 }
 
@@ -408,7 +445,33 @@ mod tests {
         let mut world = World::new();
         world.init_resource::<PlayerTuning>();
         world.init_resource::<Messages<HurtPlayer>>();
+        world.init_resource::<Messages<KillPlayer>>();
         world
+    }
+
+    #[test]
+    fn kill_player_kills_with_or_without_the_death_animation() {
+        let mut world = world();
+        let eaten = spawn_player(&mut world, PlayerForm::Bug, 1.0);
+        let dead = spawn_player(&mut world, PlayerForm::Ball, 1.0);
+        world.write_message(KillPlayer {
+            player: eaten,
+            change_anims: false,
+        });
+        world.write_message(KillPlayer {
+            player: dead,
+            change_anims: true,
+        });
+        world
+            .run_system_once(kill_players)
+            .expect("the system runs");
+        // Swallowed: dead, but still standing as it was.
+        assert_eq!(world.get::<Dying>(eaten), Some(&Dying { timer: 4.0 }));
+        assert_eq!(world.get::<BugState>(eaten), Some(&BugState::Stand));
+        // Killed with the animation: the ball turns into the dying bug.
+        assert!(world.get::<Dying>(dead).is_some());
+        assert_eq!(world.get::<PlayerForm>(dead), Some(&PlayerForm::Bug));
+        assert_eq!(world.get::<BugState>(dead), Some(&BugState::Death));
     }
 
     #[test]
