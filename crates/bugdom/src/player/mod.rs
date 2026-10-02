@@ -1,14 +1,24 @@
-//! The player: spawning, the bug form's controller and its animation.
+//! The player: spawning, the bug and ball forms' controllers, and the bug's
+//! animation.
 //!
-//! Port of original/src/Player (MyGuy.c, Player_Bug.c, Player_Control.c).
+//! Port of original/src/Player (MyGuy.c, Player_Bug.c, Player_Ball.c,
+//! Player_Control.c).
 
 mod animation;
+mod ball;
 mod bug;
+mod movement;
+mod tuning;
 
 use avian3d::prelude::{LayerMask, TransformInterpolation};
 use bevy::prelude::*;
 
-pub use bug::{BugState, PlayerTuning};
+pub use ball::{
+    BallSpin, BallTime, Nitro, PLAYER_BALL_FOOT_OFFSET, PLAYER_BALL_HEAD_OFFSET,
+    has_headroom_to_unroll,
+};
+pub use bug::BugState;
+pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 
 use crate::collision::{
     CollisionBox, CollisionCandidates, CollisionKind, CollisionSystems, SolidSides, solid_object,
@@ -25,15 +35,32 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
             .init_resource::<PlayerToCameraAngle>()
+            .init_resource::<BallTime>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 spawn_player
                     .in_set(PlayerSystems::Spawn)
                     .after(TerrainSystems::Spawn),
             )
+            // As in the original, a change of form (and the animation it
+            // starts) comes before animations advance and anything moves.
             .add_systems(
                 FixedUpdate,
-                (bug::move_bug, animation::animate_bug)
+                (ball::check_player_morph, animation::animate_bug)
+                    .chain()
+                    .in_set(PlayerSystems::Morph)
+                    .before(SkeletonSystems::Advance)
+                    .before(CollisionSystems::Gather)
+                    .run_if(in_state(AppState::InGame)),
+            )
+            .add_systems(
+                FixedUpdate,
+                (
+                    bug::move_bug,
+                    ball::move_ball,
+                    animation::animate_bug,
+                    pose_player_model,
+                )
                     .chain()
                     .in_set(PlayerSystems::Move)
                     .after(SkeletonSystems::Advance)
@@ -47,28 +74,85 @@ impl Plugin for PlayerPlugin {
 pub enum PlayerSystems {
     /// Spawns the player when the level starts.
     Spawn,
+    /// Changes the player's form when asked to, each fixed tick.
+    Morph,
     /// Moves the player each fixed tick.
     Move,
 }
 
-/// The player character.
+/// The player character. Its translation is the bug's feet, or the ball's
+/// centre; its rotation is only its heading.
 #[derive(Component, Debug, Clone, Copy, Default)]
-#[require(Velocity, GroundContact, PreviousPosition, CollisionCandidates)]
+#[require(
+    PlayerForm,
+    BugState,
+    Velocity,
+    GroundContact,
+    PreviousPosition,
+    CollisionCandidates,
+    PlayerSpeed,
+    PlayerSteering,
+    BallSpin,
+    Nitro
+)]
 pub struct Player;
 
-/// Size of the bug model (`PLAYER_BUG_SCALE`).
+/// Which form the player is in (`gPlayerMode`).
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum PlayerForm {
+    #[default]
+    Bug,
+    Ball,
+}
+
+impl PlayerForm {
+    /// The form's collision box (`SetObjectCollisionBounds` in
+    /// `InitPlayer_Bug` and `InitPlayer_Ball`). Both have the same
+    /// footprint and the bottom at the floor, so changing form can't drop
+    /// the player through things; the ball is shorter.
+    pub const fn collision_box(self) -> CollisionBox {
+        match self {
+            Self::Bug => CollisionBox::new(PLAYER_BUG_HEAD_OFFSET, 0.0, -42.0, 42.0, 42.0, -42.0),
+            Self::Ball => CollisionBox::new(
+                PLAYER_BALL_HEAD_OFFSET,
+                -PLAYER_BALL_FOOT_OFFSET,
+                -42.0,
+                42.0,
+                42.0,
+                -42.0,
+            ),
+        }
+    }
+}
+
+/// The child entity that shows the player's skeleton, which the ball turns
+/// about its centre.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerModel(pub Entity);
+
+/// The player's horizontal speed as the controls left it, before collision
+/// (`ObjNode::Speed`), in units per second. The walk animation's speed, the
+/// turning rate and the ball's spin follow it.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+pub struct PlayerSpeed(pub f32);
+
+/// The steering acceleration the controls set, in the original's units
+/// (`ObjNode::AccelVector`). It persists between ticks: some states move
+/// before they read the controls, and so use the previous tick's value.
+#[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
+pub struct PlayerSteering(pub Vec2);
+
+/// Size of the bug model (`PLAYER_BUG_SCALE`). The ball keeps the bug's
+/// geometry at this size.
 const PLAYER_BUG_SCALE: f32 = 1.7;
 /// Height of the bug's head above its origin (`PLAYER_BUG_HEADOFFSET`). Its
 /// feet are at the origin (`PLAYER_BUG_FOOTOFFSET` is 0).
 pub const PLAYER_BUG_HEAD_OFFSET: f32 = 180.0;
-/// The player's collision box, the same for the bug and the ball so that
-/// changing form can't drop it through things (`SetObjectCollisionBounds`
-/// in `InitPlayer_Bug`).
-pub const PLAYER_BOX: CollisionBox =
-    CollisionBox::new(PLAYER_BUG_HEAD_OFFSET, 0.0, -42.0, 42.0, 42.0, -42.0);
-/// The player's radius against fences (`PLAYER_RADIUS`).
+/// The player's radius against fences, the same for both forms so that
+/// changing form near a fence can't push it through (`PLAYER_RADIUS`).
 pub const PLAYER_RADIUS: f32 = 60.0;
 /// Size of the player's shadow (`AttachShadowToObject` in `InitPlayer_Bug`).
+/// The ball keeps the bug's shadow.
 const PLAYER_SHADOW_SCALE: f32 = 4.0;
 
 /// What the player bumps into (`PLAYER_COLLISION_CTYPE`).
@@ -106,27 +190,34 @@ fn spawn_player(
 ) {
     let (x, z) = (start.position.x, start.position.y);
     let position = Vec3::new(x, map.floor_height(x, z), z);
-    let player = commands.spawn((
-        Name::new("Player"),
-        Player,
-        BugState::Stand,
-        Skeleton(level_assets.player_skeleton.clone()),
-        Transform::from_translation(position)
-            .with_rotation(Quat::from_rotation_y(start.yaw()))
-            .with_scale(Vec3::splat(PLAYER_BUG_SCALE)),
-        TransformInterpolation,
-        PreviousPosition(position),
-        // Others only touch the player; it decides what happens itself.
-        // The collider grows with the model's scale, which only makes the
-        // broad phase find it from a little further away.
-        solid_object(
-            vec![PLAYER_BOX],
-            CollisionKind::Player,
-            SolidSides::TOUCHABLE,
-        ),
-        DespawnOnExit(AppState::InGame),
-    ));
-    let player = player.id();
+    let player = commands
+        .spawn((
+            Name::new("Player"),
+            Player,
+            Transform::from_translation(position).with_rotation(Quat::from_rotation_y(start.yaw())),
+            // The model is a child, which needs visibility to inherit.
+            Visibility::default(),
+            TransformInterpolation,
+            PreviousPosition(position),
+            // Others only touch the player; it decides what happens itself.
+            solid_object(
+                vec![PlayerForm::Bug.collision_box()],
+                CollisionKind::Player,
+                SolidSides::TOUCHABLE,
+            ),
+            DespawnOnExit(AppState::InGame),
+        ))
+        .id();
+    let model = commands
+        .spawn((
+            Name::new("Player model"),
+            Skeleton(level_assets.player_skeleton.clone()),
+            Transform::from_scale(Vec3::splat(PLAYER_BUG_SCALE)),
+            TransformInterpolation,
+            ChildOf(player),
+        ))
+        .id();
+    commands.entity(player).insert(PlayerModel(model));
     attach_shadow(
         &mut commands,
         &mut models,
@@ -134,4 +225,33 @@ fn spawn_player(
         Vec2::splat(PLAYER_SHADOW_SCALE),
         true,
     );
+}
+
+/// Places the player's model: the bug stands on the player's origin; the
+/// ball's frozen roll-up pose sits below its centre and rolls about it.
+///
+/// Port of the ball's transform in `UpdatePlayer_Ball`
+/// (original/src/Player/Player_Ball.c), whose mesh `InitPlayer_Ball` moves
+/// down by `PLAYER_BALL_FOOTOFFSET` and which turns about x, then y.
+fn pose_player_model(
+    players: Query<(&PlayerForm, &BallSpin, &PlayerModel)>,
+    mut models: Query<&mut Transform, Without<PlayerForm>>,
+) {
+    for (form, spin, model) in &players {
+        let Ok(mut transform) = models.get_mut(model.0) else {
+            continue;
+        };
+        let (rotation, offset) = match form {
+            PlayerForm::Bug => (Quat::IDENTITY, Vec3::ZERO),
+            PlayerForm::Ball => {
+                let roll = Quat::from_rotation_x(spin.angle);
+                (roll, roll * Vec3::new(0.0, -PLAYER_BALL_FOOT_OFFSET, 0.0))
+            }
+        };
+        transform.set_if_neq(Transform {
+            translation: offset,
+            rotation,
+            scale: Vec3::splat(PLAYER_BUG_SCALE),
+        });
+    }
 }
