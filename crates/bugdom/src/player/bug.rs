@@ -10,9 +10,8 @@ use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
 use super::ball::become_ball;
-use super::movement::{Motion, MotionContext, PlayerData};
+use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::{Dying, Player, PlayerForm, PlayerModel};
-use crate::collision::TriggerHit;
 use crate::input::Action;
 use crate::liquids::LiquidKind;
 use crate::math::turn_toward;
@@ -36,6 +35,10 @@ pub enum BugState {
     Land,
     /// Swimming in a liquid, or drowning in one that kills.
     Swim,
+    /// Knocked over by a hurt, until the fall has played out.
+    KnockedOnButt,
+    /// Killed, until the player starts again.
+    Death,
 }
 
 /// One tick of the bug's movement.
@@ -55,7 +58,7 @@ struct Bug<'a> {
 pub fn move_bug(
     mut commands: Commands,
     context: MotionContext,
-    mut trigger_hits: MessageWriter<TriggerHit>,
+    mut messages: PlayerMessages,
     mut players: Query<(PlayerData, &PlayerModel), With<Player>>,
     animators: Query<&SkeletonAnimator>,
 ) {
@@ -76,8 +79,7 @@ pub fn move_bug(
         bug.tick();
 
         let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
-        bug.motion
-            .store(&mut player, &mut commands, &mut trigger_hits);
+        bug.motion.store(&mut player, &mut commands, &mut messages);
         player.state.set_if_neq(state);
         if rolled_up {
             become_ball(&mut player);
@@ -101,6 +103,8 @@ impl Bug<'_> {
             BugState::Fall => self.fall(),
             BugState::Land => self.land(),
             BugState::Swim => self.swim(),
+            BugState::KnockedOnButt => self.knocked_on_butt(),
+            BugState::Death => self.death(),
         }
         if !self.rolled_up {
             self.update();
@@ -217,6 +221,30 @@ impl Bug<'_> {
         if self.motion.underwater.is_none() && self.state == BugState::Swim {
             self.state = BugState::Stand;
         }
+    }
+
+    /// Port of `MovePlayerBug_FallOnButt`: no control, and the knock's
+    /// speed isn't limited, until the fall's animation ends.
+    fn knocked_on_butt(&mut self) {
+        let tuning = &self.motion.tuning.bug;
+        self.motion
+            .apply_friction_and_gravity(tuning.super_friction);
+        self.motion.limit_speed = false;
+        self.move_and_collide(true);
+        self.motion.limit_speed = true;
+        if self.state == BugState::KnockedOnButt && self.animator.has_stopped {
+            self.state = BugState::Stand;
+        }
+    }
+
+    /// Port of `MovePlayerBug_Death`: the dead bug slides to a stop. The
+    /// original also takes the player out of others' collisions
+    /// (`CType = 0`); a dying player can't be hurt anyway.
+    fn death(&mut self) {
+        let tuning = &self.motion.tuning.bug;
+        self.motion
+            .apply_friction_and_gravity(tuning.friction * tuning.death_friction_scale);
+        self.move_and_collide(true);
     }
 
     /// Sinks slowly; the bug starts again once the kill delay is over.
@@ -440,6 +468,66 @@ mod tests {
         simulate_with(&animator, BugState::UnRoll, &[], 1, &[], &[], |bug| {
             assert_eq!(bug.state, BugState::Stand);
         });
+    }
+
+    #[test]
+    fn a_knocked_bug_slides_unchecked_until_the_fall_ends() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = Bug {
+            motion: bench.motion(PlayerForm::Bug, &input, &[]),
+            state: BugState::KnockedOnButt,
+            animator: &animator,
+            rolled_up: false,
+            drowned: false,
+        };
+        // Faster than the bug may walk: the knock's speed isn't limited,
+        // only slowed by friction, and the controls do nothing.
+        bug.motion.velocity = Vec3::new(1500.0, 0.0, 0.0);
+        bug.tick();
+        assert_eq!(bug.state, BugState::KnockedOnButt);
+        let slowed = 1500.0 - 2000.0 * super::super::movement::bench::DT;
+        assert!(
+            (bug.motion.speed - slowed).abs() < 1.0,
+            "{}",
+            bug.motion.speed
+        );
+        assert_eq!(bug.motion.steering, Vec2::ZERO);
+
+        let mut stopped = SkeletonAnimator::default();
+        stopped.has_stopped = true;
+        let mut bug = Bug {
+            animator: &stopped,
+            ..bug
+        };
+        bug.motion = bug.motion.next_tick(&input);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Stand);
+    }
+
+    #[test]
+    fn the_dead_bug_slides_to_a_stop_without_control() {
+        let bench = Bench::lawn();
+        let input = ControlInput::for_tests(&[Action::Forward], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &[]);
+        motion.killed = true;
+        motion.velocity = Vec3::new(400.0, 0.0, 0.0);
+        let mut bug = Bug {
+            motion,
+            state: BugState::Death,
+            animator: &animator,
+            rolled_up: false,
+            drowned: false,
+        };
+        for _ in 0..30 {
+            bug.tick();
+            bug.motion = bug.motion.next_tick(&input);
+        }
+        assert_eq!(bug.state, BugState::Death);
+        // 3000 units/s² of friction stops 400 units/s within 0.14 s.
+        assert_eq!(bug.motion.speed, 0.0);
     }
 
     /// Runs the bug from standing at the Lawn's start in a liquid whose

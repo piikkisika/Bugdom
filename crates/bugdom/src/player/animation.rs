@@ -22,6 +22,8 @@ mod anim {
     pub const FALL: usize = 6;
     pub const LAND: usize = 7;
     pub const SWIM: usize = 8;
+    pub const FALL_ON_BUTT: usize = 9;
+    pub const DEATH: usize = 13;
 }
 
 /// Walk animation speed per unit of walking speed (`MovePlayerBug_Walk`).
@@ -61,6 +63,8 @@ fn animation_for(state: BugState) -> usize {
         BugState::Fall => anim::FALL,
         BugState::Land => anim::LAND,
         BugState::Swim => anim::SWIM,
+        BugState::KnockedOnButt => anim::FALL_ON_BUTT,
+        BugState::Death => anim::DEATH,
     }
 }
 
@@ -69,7 +73,9 @@ fn animation_for(state: BugState) -> usize {
 /// at once (`SetSkeletonAnim`, or a new skeleton when the ball unrolls).
 fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
     match (from, to) {
-        (_, BugState::RollUp | BugState::UnRoll) => None,
+        // Restarted by every knock, even from a ball (`KnockPlayerBugOnButt`).
+        (_, BugState::KnockedOnButt) => Some(3.0),
+        (_, BugState::RollUp | BugState::UnRoll | BugState::Death) => None,
         (Some(BugState::UnRoll), BugState::Stand) => None,
         (None, _) => None,
         (_, BugState::Swim) => Some(5.0),
@@ -135,5 +141,20 @@ mod tests {
         assert_eq!(morph_rate(Some(BugState::RollUp), BugState::UnRoll), None);
         assert_eq!(morph_rate(Some(BugState::UnRoll), BugState::Stand), None);
         assert_eq!(morph_rate(Some(BugState::Walk), BugState::Stand), Some(6.0));
+    }
+
+    #[test]
+    fn a_knock_always_blends_and_death_never_does() {
+        assert_eq!(morph_rate(None, BugState::KnockedOnButt), Some(3.0));
+        assert_eq!(
+            morph_rate(Some(BugState::Walk), BugState::KnockedOnButt),
+            Some(3.0)
+        );
+        assert_eq!(
+            morph_rate(Some(BugState::KnockedOnButt), BugState::Stand),
+            Some(6.0)
+        );
+        assert_eq!(morph_rate(Some(BugState::Walk), BugState::Death), None);
+        assert_eq!(morph_rate(None, BugState::Death), None);
     }
 }

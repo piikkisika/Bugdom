@@ -1,12 +1,16 @@
-//! The player: spawning, the bug and ball forms' controllers, and the bug's
-//! animation.
+//! The player: spawning, the bug and ball forms' controllers, the bug's
+//! animation, getting hurt and the inventory.
 //!
 //! Port of original/src/Player (MyGuy.c, Player_Bug.c, Player_Ball.c,
-//! Player_Control.c).
+//! Player_Control.c) and of the player's half of
+//! original/src/Screens/Infobar.c.
 
 mod animation;
 mod ball;
 mod bug;
+pub mod contact;
+mod health;
+mod inventory;
 mod movement;
 mod tuning;
 
@@ -20,11 +24,19 @@ pub use ball::{
     has_headroom_to_unroll,
 };
 pub use bug::BugState;
+pub use contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
+pub use health::{
+    HurtOutcome, HurtPlayer, INVINCIBILITY_DURATION, INVINCIBILITY_DURATION_DEATH, InvincibleTimer,
+    KNOCK_RISE_SPEED, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
+};
+pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 
+use crate::assets::terrain::TerrainAsset;
 use crate::collision::{
     CollisionBox, CollisionCandidates, CollisionKind, CollisionSystems, SolidSides, solid_object,
 };
+use crate::combat::Health;
 use crate::input::{ControlInput, ControlSettings, LocalControls};
 use crate::objects::{ModelSpawner, attach_shadow};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
@@ -38,6 +50,10 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PlayerTuning>()
             .add_message::<PlayerRespawned>()
+            .add_message::<HurtPlayer>()
+            .add_message::<TouchedEnemy>()
+            .add_message::<BallHitEnemy>()
+            .add_message::<EnemyBopped>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 spawn_player
@@ -58,8 +74,11 @@ impl Plugin for PlayerPlugin {
             .add_systems(
                 FixedUpdate,
                 (
+                    health::count_down_invincibility,
                     bug::move_bug,
                     ball::move_ball,
+                    health::hurt_players,
+                    health::count_down_shield,
                     animation::animate_bug,
                     pose_player_model,
                 )
@@ -121,7 +140,11 @@ pub struct PlayerRespawned(pub Entity);
     ControlInput,
     ControlSettings,
     PlayerToCameraAngle,
-    RespawnPoint
+    RespawnPoint,
+    Health,
+    InvincibleTimer,
+    ShieldTimer,
+    Inventory
 )]
 pub struct Player;
 
@@ -216,19 +239,28 @@ pub struct RespawnPoint {
     pub yaw: f32,
 }
 
-/// Puts the bug on the floor at the level's start. Ball time and the
-/// other inventory start full for now; carrying them over between levels
-/// arrives with the game flow.
+/// Puts the bug on the floor at the level's start, with full health and
+/// an empty inventory. Ball time, health and lives start full for now;
+/// carrying them over between levels arrives with the game flow.
 ///
-/// Port of `InitPlayerAtStartOfLevel` (original/src/Player/MyGuy.c) and
-/// `InitPlayer_Bug` (original/src/Player/Player_Bug.c).
+/// Port of `InitPlayerAtStartOfLevel` (original/src/Player/MyGuy.c),
+/// `InitPlayer_Bug` (original/src/Player/Player_Bug.c) and
+/// `InitInventoryForArea` (original/src/Screens/Infobar.c).
 fn spawn_player(
     mut commands: Commands,
     start: Res<PlayerStart>,
     map: Res<TerrainMap>,
     level_assets: Res<LevelAssets>,
+    terrains: Res<Assets<TerrainAsset>>,
     mut models: ModelSpawner,
 ) {
+    let ladybugs = terrains.get(&level_assets.terrain).map_or(0, |terrain| {
+        terrain
+            .items
+            .iter()
+            .filter(|item| item.kind == crate::items::kind::LADYBUG_BONUS)
+            .count()
+    });
     let (x, z) = (start.position.x, start.position.y);
     let position = Vec3::new(x, map.floor_height(x, z), z);
     let player = commands
@@ -243,6 +275,7 @@ fn spawn_player(
                 yaw: f32::from(start.aim / 2) * (TAU / 4.0),
             },
             Transform::from_translation(position).with_rotation(Quat::from_rotation_y(start.yaw())),
+            Inventory::for_area(u16::try_from(ladybugs).unwrap_or(u16::MAX)),
             // The model is a child, which needs visibility to inherit.
             Visibility::default(),
             TransformInterpolation,
@@ -280,17 +313,29 @@ fn spawn_player(
 ///
 /// Port of the kill timer in `PlayArea` and of `DoDeathReset`
 /// (original/src/System/Main.c) and `ResetPlayer`
-/// (original/src/Player/MyGuy.c). Losing a life, the game over, the fade,
-/// health and the invincibility after starting again arrive with the
-/// infobar and the game flow.
+/// (original/src/Player/MyGuy.c). The game over when the last life is
+/// lost, and the fade, arrive with the game flow.
 fn respawn_dead_players(
     time: Res<Time>,
     map: Res<TerrainMap>,
     mut commands: Commands,
     mut respawned: MessageWriter<PlayerRespawned>,
-    mut players: Query<(movement::PlayerData, &RespawnPoint, &mut Dying), With<Player>>,
+    mut players: Query<
+        (
+            movement::PlayerData,
+            &RespawnPoint,
+            &mut Dying,
+            &mut Health,
+            &mut InvincibleTimer,
+            &mut ShieldTimer,
+            &mut Inventory,
+        ),
+        With<Player>,
+    >,
 ) {
-    for (mut player, respawn, mut dying) in &mut players {
+    for (mut player, respawn, mut dying, mut health, mut invincible, mut shield, mut inventory) in
+        &mut players
+    {
         dying.timer -= time.delta_secs();
         if dying.timer >= 0.0 {
             continue;
@@ -311,11 +356,16 @@ fn respawn_dead_players(
         player.animated.restart();
         **player.velocity = Vec3::ZERO;
         **player.previous = player.transform.translation;
+        inventory.lose_life();
+        *invincible = InvincibleTimer(INVINCIBILITY_DURATION_DEATH);
+        *health = Health(PLAYER_MAX_HEALTH);
+        *shield = ShieldTimer(0.0);
+        // Sound: stop EFFECT_SHIELD.
         // The original leaves the liquid flag for the next collision check
         // to clear; clearing it now only differs for that one tick.
         commands
             .entity(player.entity)
-            .remove::<(Dying, crate::liquids::Underwater)>();
+            .remove::<(Dying, Torched, crate::liquids::Underwater)>();
         respawned.write(PlayerRespawned(player.entity));
     }
 }
@@ -381,6 +431,9 @@ mod tests {
                     checkpoint,
                     Dying { timer },
                     BugState::Swim,
+                    Health(0.0),
+                    ShieldTimer(2.0),
+                    Torched,
                 ))
                 .id()
         };
@@ -395,6 +448,20 @@ mod tests {
         assert_eq!(at(&world, done), Some(Vec3::new(12000.0, floor, 15000.0)));
         assert!(!world.entity(done).contains::<Dying>());
         assert_eq!(world.get::<BugState>(done), Some(&BugState::Stand));
+        // `ResetPlayer` and `DoDeathReset`.
+        assert_eq!(world.get::<Health>(done), Some(&Health(PLAYER_MAX_HEALTH)));
+        assert_eq!(
+            world.get::<InvincibleTimer>(done),
+            Some(&InvincibleTimer(INVINCIBILITY_DURATION_DEATH))
+        );
+        assert_eq!(world.get::<ShieldTimer>(done), Some(&ShieldTimer(0.0)));
+        assert!(!world.entity(done).contains::<Torched>());
+        assert_eq!(
+            world.get::<Inventory>(done).map(|i| i.lives),
+            Some(STARTING_LIVES - 1)
+        );
+        assert_eq!(world.get::<Health>(waiting), Some(&Health(0.0)));
+        assert!(world.entity(waiting).contains::<Torched>());
         assert_eq!(at(&world, waiting), Some(Vec3::new(13000.0, 0.0, 16000.0)));
         assert!(world.entity(waiting).contains::<Dying>());
         let sent: Vec<_> = world
