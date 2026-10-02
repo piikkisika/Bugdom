@@ -7,6 +7,7 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 
 use avian3d::prelude::LayerMask;
+use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
 use super::kind as item;
@@ -14,6 +15,10 @@ use super::scenery::StaticObject;
 use super::{ItemSpawn, ItemSystems, RegisterItemKind};
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
+};
+use crate::effects::{
+    EffectsSystems, FULL_ALPHA, ParticleFlags, ParticleGroupDesc, ParticleGroups, ParticleKind,
+    ParticleTexture,
 };
 use crate::level::{CurrentLevel, LevelType};
 use crate::math::GameRandom;
@@ -35,7 +40,11 @@ pub(super) fn plugin(app: &mut App) {
         .add_systems(
             FixedUpdate,
             (
-                (tag_checkpoints, complete_area).after(PlayerSystems::Move),
+                (
+                    tag_checkpoints.before(EffectsSystems::MoveParticles),
+                    complete_area,
+                )
+                    .after(PlayerSystems::Move),
                 wobble_droplets,
             )
                 .run_if(in_state(AppState::InGame)),
@@ -58,6 +67,22 @@ const DROPLET_OPACITY: f32 = 0.6;
 const DROPLET_WOBBLE_RATE: Vec3 = Vec3::new(8.0, 9.0, 7.0);
 /// How much the droplet's scale wobbles.
 const DROPLET_WOBBLE: f32 = 0.4;
+/// How many sparks a popped droplet throws.
+const CHECKPOINT_SPARKS: usize = 15;
+/// The sparks' largest speed in each direction, in units per second (the
+/// whole width).
+const CHECKPOINT_SPARK_SPEED: f32 = 500.0;
+/// The sparks of a popped droplet (`DoTrig_Checkpoint`).
+const CHECKPOINT_SPARK_GROUP: ParticleGroupDesc = ParticleGroupDesc {
+    kind: ParticleKind::Sparks,
+    flags: ParticleFlags::BOUNCE,
+    gravity: 800.0,
+    magnetism: 0.0,
+    base_scale: 25.0,
+    decay_rate: -1.7,
+    fade_rate: 0.9,
+    texture: ParticleTexture::BlueFire,
+};
 const LOG_SCALE: f32 = 6.0;
 const LAWN_DOOR_SCALE: f32 = 0.6;
 /// The item flag set once a door has been opened (`ITEM_FLAGS_USER1`).
@@ -200,15 +225,17 @@ fn wobble_droplets(
     }
 }
 
-/// Records the checkpoint and pops the droplet. Port of
-/// `DoTrig_Checkpoint`; the sparks and the sound arrive with particles and
-/// audio.
+/// Records the checkpoint and pops the droplet in a burst of sparks. Port
+/// of `DoTrig_Checkpoint`.
 fn tag_checkpoints(
     mut commands: Commands,
     mut hits: MessageReader<TriggerHit>,
     droplets: Query<(&CheckpointDroplet, &Transform)>,
     mut players: Query<&mut RespawnPoint>,
+    mut groups: ResMut<ParticleGroups>,
+    mut random: ResMut<GameRandom>,
 ) {
+    let mut popped = EntityHashSet::default();
     for hit in hits.read() {
         let Ok((droplet, transform)) = droplets.get(hit.trigger) else {
             continue;
@@ -223,8 +250,28 @@ fn tag_checkpoints(
                 yaw: droplet.player_yaw,
             };
         }
-        // Two players can reach it in the same tick.
+        // Two players can reach it in the same tick; it pops once.
+        if popped.insert(hit.trigger) {
+            pop_droplet(&mut groups, &mut random, transform.translation);
+            // Sound: EFFECT_CHECKPOINT at the droplet.
+        }
         commands.entity(hit.trigger).try_despawn();
+    }
+}
+
+/// The droplet's sparks (`DoTrig_Checkpoint`).
+fn pop_droplet(groups: &mut ParticleGroups, random: &mut GameRandom, at: Vec3) {
+    let Some(group) = groups.new_group(CHECKPOINT_SPARK_GROUP) else {
+        return;
+    };
+    for _ in 0..CHECKPOINT_SPARKS {
+        let velocity = Vec3::new(
+            random.next_f32() - 0.5,
+            random.next_f32() - 0.5,
+            random.next_f32() - 0.5,
+        ) * CHECKPOINT_SPARK_SPEED;
+        let scale = random.next_f32() + 1.0;
+        groups.add_particle(group, at, velocity, scale, FULL_ALPHA);
     }
 }
 

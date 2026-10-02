@@ -15,6 +15,7 @@ use super::animation::AnimatedBugState;
 use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
 use super::contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
+use super::effects::{PlayerEffects, Splash};
 use super::health::{
     HurtOutcome, HurtPlayer, InvincibleTimer, KNOCK_RISE_SPEED, ShieldTimer, take_hurt,
 };
@@ -33,6 +34,12 @@ use crate::liquids::{Liquid, LiquidKind, Underwater};
 use crate::math::{yaw_forward, yaw_from_point_to_point, yaw_of};
 use crate::physics::{GroundContact, PreviousPosition, Velocity};
 use crate::terrain::TerrainMap;
+
+/// Falling into water faster than this, in units per second, splashes.
+const ENTRY_SPLASH_SPEED: f32 = 800.0;
+/// The splash's force and sound volume (`MakeSplash`).
+const ENTRY_SPLASH_FORCE: f32 = 0.3;
+const ENTRY_SPLASH_VOLUME: f32 = 1.0;
 
 /// The world a tick of a player's movement reads: the same for every
 /// player.
@@ -135,6 +142,8 @@ pub(super) struct Motion<'a> {
     pub touched: Vec<TouchedEnemy>,
     pub ball_hits: Vec<BallHitEnemy>,
     pub bops: Vec<EnemyBopped>,
+    /// Splashes the player threw up this tick.
+    pub splashes: Vec<Splash>,
     /// Ball time that ball-time drains took this tick, not yet taken off.
     pub ball_time_drained: f32,
     pub camera_angle: f32,
@@ -201,6 +210,7 @@ impl MotionContext<'_, '_> {
             touched: Vec::new(),
             ball_hits: Vec::new(),
             bops: Vec::new(),
+            splashes: Vec::new(),
             ball_time_drained: 0.0,
             camera_angle: **player.camera_angle,
             dt: self.time.delta_secs(),
@@ -209,15 +219,19 @@ impl MotionContext<'_, '_> {
 }
 
 impl Motion<'_> {
-    /// Writes the tick's result back to the player and sends the triggers
-    /// it set off and what it touched. Ball time drained this tick and not
-    /// already taken off comes off here.
+    /// Writes the tick's result back to the player, sends the triggers it
+    /// set off and what it touched, and makes its splashes. Ball time
+    /// drained this tick and not already taken off comes off here.
     pub fn store(
         mut self,
         player: &mut PlayerDataItem,
         commands: &mut Commands,
         messages: &mut PlayerMessages,
+        effects: &mut PlayerEffects,
     ) {
+        for splash in self.splashes.drain(..) {
+            effects.splash(splash);
+        }
         messages.triggers.write_batch(self.triggered.drain(..));
         messages.touched.write_batch(self.touched.drain(..));
         messages.ball_hits.write_batch(self.ball_hits.drain(..));
@@ -282,8 +296,8 @@ impl Motion<'_> {
     /// Port of `DoPlayerMovementAndCollision`
     /// (original/src/Player/Player_Control.c). In a liquid the player floats
     /// just under the top of its volume, and the ball turns back into the
-    /// bug to swim. Moving platforms and viscous traps arrive with those
-    /// features.
+    /// bug to swim; falling fast into water splashes. Moving platforms and
+    /// viscous traps arrive with those features.
     pub fn move_and_collide(&mut self, no_control: bool) {
         let tuning = self.tuning;
         let form = tuning.form(self.form);
@@ -315,7 +329,14 @@ impl Motion<'_> {
                 // The ball can't swim (`InitPlayer_Bug` with
                 // `PLAYER_ANIM_SWIM`).
                 self.form = PlayerForm::Bug;
-                // Splashes arrive with the particle effects.
+                // Checked before the fall is stopped below.
+                if underwater.liquid == LiquidKind::Water && self.velocity.y < -ENTRY_SPLASH_SPEED {
+                    self.splashes.push(Splash {
+                        position: Vec3::new(self.coord.x, underwater.volume_top, self.coord.z),
+                        force: ENTRY_SPLASH_FORCE,
+                        volume: ENTRY_SPLASH_VOLUME,
+                    });
+                }
                 self.coord.y = underwater.volume_top - 1.0;
                 self.velocity.y = -1.0;
             }
@@ -676,6 +697,7 @@ pub(super) mod bench {
                 touched: Vec::new(),
                 ball_hits: Vec::new(),
                 bops: Vec::new(),
+                splashes: Vec::new(),
                 ball_time_drained: 0.0,
                 camera_angle: 0.0,
                 dt: DT,
@@ -717,6 +739,7 @@ pub(super) mod bench {
                 touched: Vec::new(),
                 ball_hits: Vec::new(),
                 bops: Vec::new(),
+                splashes: Vec::new(),
                 ball_time_drained: 0.0,
                 ..self
             }
@@ -926,5 +949,24 @@ mod tests {
         motion.move_and_collide(true);
         assert!(motion.bops.is_empty());
         assert!(!motion.touched.is_empty());
+    }
+
+    #[test]
+    fn falling_fast_into_water_splashes() {
+        let bench = Bench::lawn();
+        let water = [bench.liquid(LiquidKind::Water, 300.0)];
+        let idle = ControlInput::default();
+        for (fall_speed, splashes) in [(1000.0, 1), (500.0, 0)] {
+            let mut motion = bench.motion(PlayerForm::Bug, &idle, &water);
+            motion.candidate_liquids = vec![Some(LiquidKind::Water)];
+            motion.velocity.y = -fall_speed;
+            motion.move_and_collide(false);
+            let top = motion.underwater.expect("in the water").volume_top;
+            assert_eq!(motion.splashes.len(), splashes, "{fall_speed}");
+            for splash in &motion.splashes {
+                assert_eq!(splash.position.y, top);
+                assert_eq!(splash.force, ENTRY_SPLASH_FORCE);
+            }
+        }
     }
 }

@@ -6,18 +6,26 @@
 //! reads and writes the state and never touches the animator, and
 //! `animate_bug` (in `animation.rs`) starts the animation that matches it.
 
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 
 use super::animation::AnimatedBugState;
 use super::ball::become_ball;
-use super::health::kill_player;
-use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, kick_impact};
+use super::effects::{
+    PlayerEffects, SWIM_RIPPLE_INTERVAL, SWIM_RIPPLE_SCALE, Splash, SwimRipple, TorchFire,
+};
+use super::health::{Torched, kill_player};
+use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, PELVIS_JOINT, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::{Dying, Player, PlayerForm, PlayerModel};
 use crate::input::Action;
 use crate::liquids::LiquidKind;
 use crate::math::turn_toward;
-use crate::skeleton::{AnimationFlags, SkeletonAnimator, SkeletonRig};
+use crate::skeleton::{AnimationFlags, SkeletonAnimator, SkeletonRig, joint_position};
+
+/// The splash of jumping out of water (`MakeSplash`).
+const JUMP_OUT_SPLASH_FORCE: f32 = 0.2;
+const JUMP_OUT_SPLASH_VOLUME: f32 = 3.0;
 
 /// What the bug is doing. The variants carry no data; anything a state needs
 /// lives in its own component.
@@ -54,6 +62,12 @@ struct Bug<'a> {
     rolled_up: bool,
     /// A liquid has killed the bug.
     drowned: bool,
+    /// The bug is on fire (`gTorchPlayer`); lava sets it.
+    torched: bool,
+    /// Seconds since the last swimming ripple (`RippleTimer`).
+    ripple_timer: f32,
+    /// A ripple is due at this point on the water's surface.
+    ripple_at: Option<Vec3>,
     /// The kick animation has reached the frame where the foot lands
     /// (`KickNow`).
     kick_now: bool,
@@ -75,7 +89,17 @@ pub fn move_bug(
     mut messages: PlayerMessages,
     kickables: Kickables,
     mut kicks: MessageWriter<KickLanded>,
-    mut players: Query<(PlayerData, &PlayerModel), With<Player>>,
+    mut effects: PlayerEffects,
+    mut players: Query<
+        (
+            PlayerData,
+            &PlayerModel,
+            &mut SwimRipple,
+            &mut TorchFire,
+            Has<Torched>,
+        ),
+        With<Player>,
+    >,
     mut models: Query<
         (
             &SkeletonAnimator,
@@ -86,7 +110,7 @@ pub fn move_bug(
         Without<Player>,
     >,
 ) {
-    for (mut player, model) in &mut players {
+    for (mut player, model, mut ripple, mut fire, torched) in &mut players {
         if *player.form != PlayerForm::Bug {
             continue;
         }
@@ -104,6 +128,9 @@ pub fn move_bug(
             animator,
             rolled_up: false,
             drowned: false,
+            torched,
+            ripple_timer: **ripple,
+            ripple_at: None,
             kick_now: flags.0[KICK_NOW_FLAG],
             kickables: &kickable_positions,
             kick_started: false,
@@ -124,9 +151,27 @@ pub fn move_bug(
             });
         }
 
+        ripple.set_if_neq(SwimRipple(bug.ripple_timer));
+        if let Some(at) = bug.ripple_at {
+            effects.ripple(&mut commands, at, SWIM_RIPPLE_SCALE);
+        }
+        if bug.torched && !torched {
+            commands.entity(player.entity).insert(Torched);
+        }
+        // `DrownInLiquid` is the only caller of `TorchPlayer`.
+        if bug.drowned && bug.torched {
+            let base = Affine3A::from_rotation_translation(
+                Quat::from_rotation_y(bug.motion.yaw),
+                bug.motion.coord,
+            ) * model_transform.compute_affine();
+            let pelvis = rig.and_then(|rig| joint_position(rig, PELVIS_JOINT, Vec3::ZERO, base));
+            effects.torch(&mut fire, pelvis, bug.motion.dt);
+        }
+
         let (state, rolled_up, drowned) = (bug.state, bug.rolled_up, bug.drowned);
         let (knocked, died) = (bug.motion.knocked.is_some(), bug.motion.died);
-        bug.motion.store(&mut player, &mut commands, &mut messages);
+        bug.motion
+            .store(&mut player, &mut commands, &mut messages, &mut effects);
         player.state.set_if_neq(state);
         if died {
             kill_player(&mut player, &mut commands, context.tuning().kill_delay);
@@ -294,25 +339,53 @@ impl Bug<'_> {
         }
     }
 
-    /// Port of `MovePlayerBug_Swim`: slow and floaty in water. Any other
-    /// liquid kills. Ripples arrive with the effects, and lava's burning
-    /// with the particles.
+    /// Port of `MovePlayerBug_Swim`: slow and floaty in water, leaving
+    /// ripples. Any other liquid kills, and lava sets the bug on fire.
     fn swim(&mut self) {
         let liquid = self
             .motion
             .underwater
             .map_or(LiquidKind::Water, |u| u.liquid);
         if liquid != LiquidKind::Water {
+            if liquid == LiquidKind::Lava {
+                self.torched = true;
+            }
             self.drown();
             return;
         }
+        // The last water the bug was in (`gPlayerCurrentWaterY`).
+        let water_y = self.motion.underwater.map(|u| u.volume_top);
         let tuning = &self.motion.tuning.bug;
         self.control(tuning.swim_steering);
         self.motion
             .apply_friction_and_gravity(tuning.friction * tuning.swim_friction_scale);
         self.move_and_collide(false);
-        if self.motion.underwater.is_none() && self.state == BugState::Swim {
-            self.state = BugState::Stand;
+        // The original skips the rest when the move killed the bug.
+        if self.motion.died {
+            return;
+        }
+
+        self.ripple_timer += self.motion.dt;
+        if self.ripple_timer > SWIM_RIPPLE_INTERVAL {
+            self.ripple_timer = 0.0;
+            let surface = self.motion.coord.y + LiquidKind::Water.collision_top_offset();
+            self.ripple_at = Some(Vec3::new(self.motion.coord.x, surface, self.motion.coord.z));
+        }
+
+        if self.motion.underwater.is_none() {
+            if self.state == BugState::Swim {
+                self.state = BugState::Stand;
+            }
+            if self.state == BugState::Jump
+                && let Some(water_y) = water_y
+            {
+                let m = &mut self.motion;
+                m.splashes.push(Splash {
+                    position: Vec3::new(m.coord.x, water_y, m.coord.z),
+                    force: JUMP_OUT_SPLASH_FORCE,
+                    volume: JUMP_OUT_SPLASH_VOLUME,
+                });
+            }
         }
     }
 
@@ -457,6 +530,9 @@ mod tests {
             animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -543,6 +619,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -560,6 +639,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -647,6 +729,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -690,6 +775,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -724,6 +812,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -767,16 +858,60 @@ mod tests {
         let jump = ControlInput::for_tests(&[], &[Action::Jump]);
         let mut states = Vec::new();
         let mut rise = 0.0;
+        let mut splashes = Vec::new();
+        let mut water_y = 0.0;
         simulate_in_liquid(LiquidKind::Water, 300.0, &[idle, jump], |bug| {
             states.push(bug.state);
             rise = bug.motion.velocity.y;
+            splashes.push(bug.motion.splashes.clone());
+            if let Some(underwater) = bug.motion.underwater {
+                water_y = underwater.volume_top;
+            }
         });
         assert_eq!(states, [BugState::Swim, BugState::Jump]);
+        // Jumping out splashes at the top of the water it left.
+        assert!(splashes[0].is_empty());
+        assert_eq!(splashes[1].len(), 1);
+        assert_eq!(splashes[1][0].position.y, water_y);
+        assert_eq!(splashes[1][0].force, JUMP_OUT_SPLASH_FORCE);
         // The jump comes before the tick's gravity.
         assert!(
             (rise - (2000.0 / 1.4 - 5200.0 / 60.0)).abs() < 1e-2,
             "{rise}"
         );
+    }
+
+    #[test]
+    fn swimming_leaves_a_ripple_every_quarter_second() {
+        let idle = ControlInput::default();
+        let mut ripples = Vec::new();
+        simulate_in_liquid(LiquidKind::Water, 300.0, &vec![idle; 60], |bug| {
+            // The timer starts over with each ripple.
+            if let Some(at) = bug.ripple_at
+                && bug.ripple_timer == 0.0
+            {
+                let top = bug.motion.underwater.expect("in the water").volume_top;
+                ripples.push((at, top));
+            }
+        });
+        // The first tick only gets the bug into the water.
+        assert_eq!(ripples.len(), 3);
+        for (at, top) in ripples {
+            // On the visible surface, 1 above the bug's float height.
+            assert!((at.y - (top - 1.0 + LiquidKind::Water.collision_top_offset())).abs() < 1e-3);
+        }
+    }
+
+    #[test]
+    fn lava_sets_the_drowning_bug_on_fire_and_honey_does_not() {
+        let idle = ControlInput::default();
+        for (kind, torched) in [(LiquidKind::Lava, true), (LiquidKind::Honey, false)] {
+            let mut on_fire = false;
+            simulate_in_liquid(kind, 300.0, &[idle.clone(), idle.clone()], |bug| {
+                on_fire = bug.torched;
+            });
+            assert_eq!(on_fire, torched, "{kind:?}");
+        }
     }
 
     #[test]
@@ -808,6 +943,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -834,6 +972,9 @@ mod tests {
             animator: &animator,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &[],
             kick_started: false,
@@ -860,6 +1001,9 @@ mod tests {
             animator: &stopped,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &kickables,
             kick_started: false,
@@ -881,6 +1025,9 @@ mod tests {
             animator: &stopped,
             rolled_up: false,
             drowned: false,
+            torched: false,
+            ripple_timer: 0.0,
+            ripple_at: None,
             kick_now: false,
             kickables: &far,
             kick_started: false,

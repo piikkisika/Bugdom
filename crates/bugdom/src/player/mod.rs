@@ -9,6 +9,7 @@ mod animation;
 mod ball;
 mod bug;
 pub mod contact;
+mod effects;
 mod health;
 mod inventory;
 mod kick;
@@ -28,6 +29,7 @@ pub use bug::BugState;
 pub use contact::{
     BallHitEnemy, EnemyBopped, EnemyKicked, ItemKicked, KICK_ENEMY_DAMAGE, KICK_SPEED, TouchedEnemy,
 };
+pub use effects::{NitroTrail, SwimRipple, TorchFire};
 pub use health::{
     HurtOutcome, HurtPlayer, INVINCIBILITY_DURATION, INVINCIBILITY_DURATION_DEATH, InvincibleTimer,
     KNOCK_RISE_SPEED, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
@@ -164,7 +166,10 @@ pub struct PlayerRespawned(pub Entity);
     Health,
     InvincibleTimer,
     ShieldTimer,
-    Inventory
+    Inventory,
+    SwimRipple,
+    TorchFire,
+    NitroTrail
 )]
 pub struct Player;
 
