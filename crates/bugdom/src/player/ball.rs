@@ -16,9 +16,8 @@ use std::f32::consts::TAU;
 use bevy::prelude::*;
 
 use super::bug::BugState;
-use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem};
+use super::movement::{Motion, MotionContext, PlayerData, PlayerDataItem, PlayerMessages};
 use super::{Player, PlayerForm, PlayerTuning};
-use crate::collision::TriggerHit;
 use crate::input::Action;
 use crate::math::turn_toward;
 use crate::terrain::{LayerKind, TerrainMap};
@@ -66,17 +65,18 @@ pub(super) fn become_ball(player: &mut PlayerDataItem) {
     **player.nitro = 0.0;
 }
 
-/// Turns the ball back into the bug, which then unrolls.
+/// Turns the ball back into the bug, which starts in `state`: unrolling,
+/// or dying.
 ///
 /// Port of `InitPlayer_Bug` (original/src/Player/Player_Bug.c) as called
-/// with an old player object and `PLAYER_ANIM_UNROLL`. The original then
+/// with an old player object. The original then
 /// records the new position as the old one before anything moves, which
 /// [`PreviousPosition`](crate::physics::PreviousPosition) does here.
-pub(super) fn become_bug(player: &mut PlayerDataItem) {
+pub(super) fn become_bug(player: &mut PlayerDataItem, state: BugState) {
     player.set_form(PlayerForm::Bug);
     player.transform.translation.y -= PLAYER_BALL_FOOT_OFFSET;
     **player.previous = player.transform.translation;
-    *player.state = BugState::UnRoll;
+    *player.state = state;
     player.animated.restart();
     *player.spin = BallSpin::default();
 }
@@ -126,7 +126,7 @@ pub fn check_player_morph(
         match *player.form {
             PlayerForm::Ball => {
                 if has_headroom_to_unroll(&map, &tuning, player.transform.translation) {
-                    become_bug(&mut player);
+                    become_bug(&mut player, BugState::UnRoll);
                 }
             }
             PlayerForm::Bug => {
@@ -159,7 +159,7 @@ struct Ball<'a> {
 pub fn move_ball(
     mut commands: Commands,
     context: MotionContext,
-    mut trigger_hits: MessageWriter<TriggerHit>,
+    mut messages: PlayerMessages,
     mut players: Query<PlayerData, With<Player>>,
 ) {
     for mut player in &mut players {
@@ -178,14 +178,13 @@ pub fn move_ball(
         let (spin, nitro, unrolled) = (ball.spin, ball.nitro, ball.unrolled);
         let swimming = ball.motion.form == PlayerForm::Bug;
         player.ball_time.set_if_neq(BallTime(ball.ball_time));
-        ball.motion
-            .store(&mut player, &mut commands, &mut trigger_hits);
+        ball.motion.store(&mut player, &mut commands, &mut messages);
         player.spin.set_if_neq(spin);
         player.nitro.set_if_neq(Nitro(nitro));
         if swimming {
             become_swimming_bug(&mut player);
         } else if unrolled {
-            become_bug(&mut player);
+            become_bug(&mut player, BugState::UnRoll);
         }
     }
 }
@@ -196,6 +195,12 @@ impl Ball<'_> {
         let tuning = self.motion.tuning;
         self.motion.apply_friction_and_gravity(tuning.ball.friction);
         self.motion.move_and_collide(false);
+        // Ball-time drains touched during the move (`LoseBallTime` in
+        // `DoPlayerCollisionDetect`), which can unroll the ball.
+        let drained = std::mem::take(&mut self.motion.ball_time_drained);
+        if drained > 0.0 {
+            self.lose_ball_time(drained);
+        }
         if self.nitro > 0.0 {
             self.nitro = (self.nitro - self.motion.dt).max(0.0);
         }

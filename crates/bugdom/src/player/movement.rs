@@ -14,6 +14,8 @@ use bevy::prelude::*;
 use super::animation::AnimatedBugState;
 use super::ball::{BallSpin, BallTime, Nitro};
 use super::bug::BugState;
+use super::contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
+use super::health::HurtPlayer;
 use super::{
     Dying, PLAYER_RADIUS, PlayerForm, PlayerSpeed, PlayerSteering, PlayerToCameraAngle,
     PlayerTuning, player_collision_mask,
@@ -22,6 +24,7 @@ use crate::collision::{
     BoxMover, BoxTarget, CollisionBoxes, CollisionCandidates, CollisionKind, SolidSides,
     TriggerHit, collide_floor_and_ceiling, resolve_box_collisions,
 };
+use crate::combat::Damage;
 use crate::fences::Fences;
 use crate::input::{Action, ControlInput, ControlSettings};
 use crate::liquids::{Liquid, LiquidKind, Underwater};
@@ -38,6 +41,17 @@ pub(super) struct MotionContext<'w, 's> {
     map: Res<'w, TerrainMap>,
     fences: Option<Res<'w, Fences>>,
     liquids: Query<'w, 's, &'static Liquid>,
+    damages: Query<'w, 's, &'static Damage>,
+}
+
+/// The messages a tick of a player's movement sends.
+#[derive(SystemParam)]
+pub(super) struct PlayerMessages<'w> {
+    triggers: MessageWriter<'w, TriggerHit>,
+    hurts: MessageWriter<'w, HurtPlayer>,
+    touched: MessageWriter<'w, TouchedEnemy>,
+    ball_hits: MessageWriter<'w, BallHitEnemy>,
+    bops: MessageWriter<'w, EnemyBopped>,
 }
 
 /// The player's components that its movement reads and writes, whatever
@@ -78,7 +92,13 @@ pub(super) struct Motion<'a> {
     pub coord: Vec3,
     pub yaw: f32,
     pub velocity: Vec3,
+    /// The velocity at the start of the tick (`ObjNode::Delta`, as opposed
+    /// to `gDelta`).
+    pub start_velocity: Vec3,
     pub speed: f32,
+    /// The controls' speed limit applies (it doesn't while the bug is
+    /// knocked on its butt).
+    pub limit_speed: bool,
     pub steering: Vec2,
     pub ground: GroundContact,
     pub tuning: &'a PlayerTuning,
@@ -89,6 +109,8 @@ pub(super) struct Motion<'a> {
     pub candidates: &'a [BoxTarget],
     /// The liquid each candidate is, if it is one.
     pub candidate_liquids: Vec<Option<LiquidKind>>,
+    /// The damage each candidate deals ([`Damage`], or 0).
+    pub candidate_damage: Vec<f32>,
     /// In a liquid's volume, as of the last collision check
     /// (`STATUS_BIT_UNDERWATER`).
     pub underwater: Option<Underwater>,
@@ -97,6 +119,13 @@ pub(super) struct Motion<'a> {
     /// Triggers that went off and stopped being solid this tick.
     pub spent: EntityHashSet,
     pub triggered: Vec<TriggerHit>,
+    /// Hurts from what the player touched this tick.
+    pub hurts: Vec<HurtPlayer>,
+    pub touched: Vec<TouchedEnemy>,
+    pub ball_hits: Vec<BallHitEnemy>,
+    pub bops: Vec<EnemyBopped>,
+    /// Ball time that ball-time drains took this tick, not yet taken off.
+    pub ball_time_drained: f32,
     pub camera_angle: f32,
     pub dt: f32,
 }
@@ -128,7 +157,9 @@ impl MotionContext<'_, '_> {
             coord: player.transform.translation,
             yaw: yaw_of(player.transform.rotation),
             velocity: **player.velocity,
+            start_velocity: **player.velocity,
             speed: **player.speed,
+            limit_speed: true,
             steering: **player.steering,
             ground: *player.ground,
             tuning: &self.tuning,
@@ -142,10 +173,20 @@ impl MotionContext<'_, '_> {
                 .iter()
                 .map(|t| self.liquids.get(t.entity).ok().map(|l| l.0))
                 .collect(),
+            candidate_damage: candidates
+                .0
+                .iter()
+                .map(|t| self.damages.get(t.entity).map_or(0.0, |d| d.0))
+                .collect(),
             underwater: player.underwater.copied(),
             killed: player.dying,
             spent: EntityHashSet::default(),
             triggered: Vec::new(),
+            hurts: Vec::new(),
+            touched: Vec::new(),
+            ball_hits: Vec::new(),
+            bops: Vec::new(),
+            ball_time_drained: 0.0,
             camera_angle: **player.camera_angle,
             dt: self.time.delta_secs(),
         }
@@ -154,14 +195,23 @@ impl MotionContext<'_, '_> {
 
 impl Motion<'_> {
     /// Writes the tick's result back to the player and sends the triggers
-    /// it set off.
+    /// it set off and what it touched. Ball time drained this tick and not
+    /// already taken off comes off here.
     pub fn store(
         mut self,
         player: &mut PlayerDataItem,
         commands: &mut Commands,
-        hits: &mut MessageWriter<TriggerHit>,
+        messages: &mut PlayerMessages,
     ) {
-        hits.write_batch(self.triggered.drain(..));
+        messages.triggers.write_batch(self.triggered.drain(..));
+        messages.hurts.write_batch(self.hurts.drain(..));
+        messages.touched.write_batch(self.touched.drain(..));
+        messages.ball_hits.write_batch(self.ball_hits.drain(..));
+        messages.bops.write_batch(self.bops.drain(..));
+        if self.ball_time_drained > 0.0 {
+            // `LoseBallTime` for the bug, which has nothing to unroll.
+            **player.ball_time = (**player.ball_time - self.ball_time_drained).max(0.0);
+        }
         if player.underwater.copied() != self.underwater {
             let mut entity = commands.entity(player.entity);
             match self.underwater {
@@ -351,7 +401,7 @@ impl Motion<'_> {
             self.velocity.x = 0.0;
             self.velocity.z = 0.0;
         }
-        if self.speed > max_speed {
+        if self.limit_speed && self.speed > max_speed {
             // Only the horizontal speed is limited; jumps and falls have
             // their own limits.
             let scale = max_speed / self.speed;
@@ -361,13 +411,12 @@ impl Motion<'_> {
         }
     }
 
-    /// Bumps into solid objects, sets off triggers and finds out whether
-    /// the player is in a liquid. A killed player only bumps into solid
-    /// things.
+    /// Bumps into solid objects, sets off triggers, finds out whether the
+    /// player is in a liquid, and notes what hurt it and which enemies it
+    /// touched or bopped. A killed player only bumps into solid things.
     ///
     /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
-    /// Enemies, hurting objects, platforms and viscous objects arrive with
-    /// those features.
+    /// Platforms and viscous objects arrive with those features.
     fn collide_with_objects(&mut self, dt: f32) {
         let mover = BoxMover {
             entity: self.entity,
@@ -394,8 +443,9 @@ impl Motion<'_> {
         }
 
         self.underwater = None;
+        let candidates = self.candidates;
         for hit in &result.hits {
-            let target = &self.candidates[hit.target];
+            let target = &candidates[hit.target];
             if self.spent.contains(&target.entity) {
                 continue;
             }
@@ -407,6 +457,35 @@ impl Motion<'_> {
             {
                 self.coord.x = self.old_coord.x;
                 self.coord.z = self.old_coord.z;
+            }
+
+            let damage = self
+                .candidate_damage
+                .get(hit.target)
+                .copied()
+                .unwrap_or(0.0);
+            if target.kinds.has_all(CollisionKind::Enemy) {
+                // Only landing on top of it bops it.
+                if target.kinds.has_all(CollisionKind::Boppable)
+                    && hit.sides.contains(SolidSides::BOTTOM)
+                {
+                    self.bops.push(EnemyBopped {
+                        player: self.entity,
+                        enemy: target.entity,
+                    });
+                } else {
+                    self.hit_enemy(target, damage);
+                }
+            }
+            if target.kinds.has_all(CollisionKind::HurtMe) {
+                self.hurts.push(HurtPlayer {
+                    knock: !target.kinds.has_all(CollisionKind::HurtNoKnock),
+                    ..HurtPlayer::new(self.entity, Some(target.entity), damage)
+                });
+            }
+            // A drain's damage is ball time per second.
+            if target.kinds.has_all(CollisionKind::DrainBallTime) {
+                self.ball_time_drained += damage * dt;
             }
             // Something solid underfoot wins over the liquid, so that
             // standing on things in it is reliable. The liquid must also be
@@ -428,6 +507,31 @@ impl Motion<'_> {
             if !self.triggered.iter().any(|t| t.trigger == trigger.trigger) {
                 self.triggered.push(trigger);
             }
+        }
+    }
+
+    /// A spiked enemy hurts the player; the ball runs into the enemy.
+    ///
+    /// Port of `PlayerHitEnemy` (original/src/Player/MyGuy.c). Its switch
+    /// on the enemy's kind becomes the messages that the enemies answer.
+    fn hit_enemy(&mut self, enemy: &BoxTarget, damage: f32) {
+        let spiked = enemy.kinds.has_all(CollisionKind::Spiked);
+        if spiked {
+            self.hurts
+                .push(HurtPlayer::new(self.entity, Some(enemy.entity), damage));
+        }
+        self.touched.push(TouchedEnemy {
+            player: self.entity,
+            enemy: enemy.entity,
+            spiked,
+        });
+        if self.form == PlayerForm::Ball {
+            self.ball_hits.push(BallHitEnemy {
+                player: self.entity,
+                enemy: enemy.entity,
+                ball_velocity: self.start_velocity,
+                ball_speed: self.speed,
+            });
         }
     }
 
@@ -480,7 +584,9 @@ pub(super) mod bench {
                 coord,
                 yaw: 0.0,
                 velocity: Vec3::ZERO,
+                start_velocity: Vec3::ZERO,
                 speed: 0.0,
+                limit_speed: true,
                 steering: Vec2::ZERO,
                 ground: GroundContact::default(),
                 tuning: &self.tuning,
@@ -490,10 +596,16 @@ pub(super) mod bench {
                 fences: None,
                 candidates,
                 candidate_liquids: vec![None; candidates.len()],
+                candidate_damage: vec![0.0; candidates.len()],
                 underwater: None,
                 killed: false,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
+                hurts: Vec::new(),
+                touched: Vec::new(),
+                ball_hits: Vec::new(),
+                bops: Vec::new(),
+                ball_time_drained: 0.0,
                 camera_angle: 0.0,
                 dt: DT,
             }
@@ -525,11 +637,165 @@ pub(super) mod bench {
         pub fn next_tick(self, input: &'a ControlInput) -> Self {
             Motion {
                 old_coord: self.coord,
+                start_velocity: self.velocity,
                 input,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
+                hurts: Vec::new(),
+                touched: Vec::new(),
+                ball_hits: Vec::new(),
+                bops: Vec::new(),
+                ball_time_drained: 0.0,
                 ..self
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use avian3d::prelude::LayerMask;
+
+    use super::bench::{Bench, DT, START};
+    use super::*;
+    use crate::collision::CollisionBox;
+    use crate::player::INVINCIBILITY_DURATION;
+
+    const TARGET: u32 = 11;
+
+    fn target_entity() -> Entity {
+        Entity::from_raw_u32(TARGET).expect("a valid index")
+    }
+
+    /// A box of the given kinds and sides around the player at [`START`],
+    /// from `bottom` to `top` above the floor.
+    fn target(
+        bench: &Bench,
+        kinds: &[CollisionKind],
+        solid: SolidSides,
+        bottom: f32,
+        top: f32,
+    ) -> BoxTarget {
+        let floor = bench.map.floor_height(START.x, START.y);
+        let shape = CollisionBox::new(floor + top, floor + bottom, -100.0, 100.0, 100.0, -100.0)
+            .at(Vec3::new(START.x, 0.0, START.y));
+        BoxTarget {
+            entity: target_entity(),
+            kinds: kinds
+                .iter()
+                .fold(LayerMask::NONE, |mask, &kind| mask | kind),
+            solid,
+            boxes: vec![shape],
+            old_boxes: vec![shape],
+            velocity: Vec3::ZERO,
+            trigger: None,
+        }
+    }
+
+    /// A touch-only box of the given kinds around the player.
+    fn around(bench: &Bench, kinds: &[CollisionKind]) -> [BoxTarget; 1] {
+        [target(bench, kinds, SolidSides::TOUCHABLE, -50.0, 300.0)]
+    }
+
+    /// Moves a still player of the given form once among `targets`, each
+    /// dealing `damage`.
+    fn touch<'a>(
+        bench: &'a Bench,
+        form: PlayerForm,
+        input: &'a ControlInput,
+        targets: &'a [BoxTarget],
+        damage: f32,
+    ) -> Motion<'a> {
+        let mut motion = bench.motion(form, input, targets);
+        motion.candidate_damage = vec![damage; targets.len()];
+        motion.move_and_collide(false);
+        motion
+    }
+
+    #[test]
+    fn hurting_objects_hurt_with_their_damage() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let hurts = around(&bench, &[CollisionKind::HurtMe]);
+        let motion = touch(&bench, PlayerForm::Bug, &input, &hurts, 0.2);
+        let hurt = motion.hurts.first().expect("a hurt");
+        assert_eq!(hurt.damage, 0.2);
+        assert!(hurt.knock);
+        assert!(!hurt.override_shield);
+        assert_eq!(hurt.invincible_for, INVINCIBILITY_DURATION);
+        assert_eq!(hurt.source, Some(target_entity()));
+        assert!(motion.touched.is_empty());
+
+        let no_knock = around(&bench, &[CollisionKind::HurtMe, CollisionKind::HurtNoKnock]);
+        let motion = touch(&bench, PlayerForm::Bug, &input, &no_knock, 0.2);
+        assert!(motion.hurts.first().is_some_and(|h| !h.knock));
+    }
+
+    #[test]
+    fn ball_time_drains_drain_their_damage_per_second() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let drain = around(&bench, &[CollisionKind::Misc, CollisionKind::DrainBallTime]);
+        let motion = touch(&bench, PlayerForm::Ball, &input, &drain, 0.5);
+        assert!((motion.ball_time_drained - 0.5 * DT).abs() < 1e-6);
+        assert!(motion.hurts.is_empty());
+    }
+
+    #[test]
+    fn a_spiked_enemy_hurts_and_the_ball_hits_it() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let enemy = around(&bench, &[CollisionKind::Enemy, CollisionKind::Spiked]);
+        let motion = touch(&bench, PlayerForm::Ball, &input, &enemy, 0.3);
+        assert_eq!(motion.hurts.first().map(|h| h.damage), Some(0.3));
+        assert!(motion.touched.first().is_some_and(|t| t.spiked));
+        assert!(!motion.ball_hits.is_empty());
+        assert!(motion.bops.is_empty());
+
+        // The bug only touches it.
+        let motion = touch(&bench, PlayerForm::Bug, &input, &enemy, 0.3);
+        assert!(!motion.hurts.is_empty());
+        assert!(motion.ball_hits.is_empty());
+    }
+
+    #[test]
+    fn a_plain_enemy_is_touched_without_hurting() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let enemy = around(&bench, &[CollisionKind::Enemy]);
+        let motion = touch(&bench, PlayerForm::Bug, &input, &enemy, 0.3);
+        assert!(motion.hurts.is_empty());
+        assert!(motion.touched.first().is_some_and(|t| !t.spiked));
+    }
+
+    #[test]
+    fn landing_on_a_boppable_enemy_bops_it() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        // An enemy whose top is 40 units above the floor; the bug comes
+        // down onto it from above.
+        let enemy = [target(
+            &bench,
+            &[CollisionKind::Enemy, CollisionKind::Boppable],
+            SolidSides::ALL,
+            -100.0,
+            40.0,
+        )];
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &enemy);
+        motion.coord.y += 38.0;
+        motion.old_coord = motion.coord + Vec3::Y * 20.0;
+        motion.velocity = Vec3::new(0.0, -600.0, 0.0);
+        motion.move_and_collide(true);
+        assert_eq!(motion.bops.first().map(|b| b.enemy), Some(target_entity()));
+        assert!(motion.touched.is_empty());
+
+        // Walking into its side is only a touch.
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &enemy);
+        motion.coord.z += 150.0;
+        motion.old_coord = motion.coord;
+        motion.velocity = Vec3::new(0.0, 0.0, -1200.0);
+        motion.move_and_collide(true);
+        assert!(motion.bops.is_empty());
+        assert!(!motion.touched.is_empty());
     }
 }

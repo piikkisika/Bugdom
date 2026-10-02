@@ -96,6 +96,9 @@ pub struct BugTuning {
     /// How fast a bug sinks once a liquid has killed it
     /// (`DrownInLiquid`).
     pub drown_sink_speed: f32,
+    /// How many times the walking friction slows the dead bug
+    /// (`MovePlayerBug_Death`).
+    pub death_friction_scale: f32,
 }
 
 /// The ball's constants.
@@ -180,6 +183,7 @@ impl Default for PlayerTuning {
                 swim_friction_scale: 1.0 / 6.0,
                 swim_jump_scale: 1.0 / 1.4,
                 drown_sink_speed: 30.0,
+                death_friction_scale: 5.0,
             },
             ball: BallTuning {
                 motion: FormMotion {

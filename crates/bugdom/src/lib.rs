@@ -4,6 +4,7 @@
 pub mod assets;
 pub mod camera;
 pub mod collision;
+pub mod combat;
 pub mod dev;
 pub mod fences;
 pub mod input;
