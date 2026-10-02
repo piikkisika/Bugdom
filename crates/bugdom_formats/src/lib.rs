@@ -4,6 +4,14 @@
 //! This crate deliberately has no Bevy dependency, so the converter and tests
 //! can use it without pulling in the engine.
 
+mod error;
+mod four_cc;
+pub mod mac_roman;
+pub mod rsrc;
+
+pub use error::{Error, Result, ResultExt};
+pub use four_cc::FourCC;
+
 use std::path::PathBuf;
 
 /// The original game data in the repository's `original/` submodule.
