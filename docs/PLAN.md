@@ -145,6 +145,10 @@ The original game is not built as part of this project.
 - **Milestone:** every level is playable from start to finish
 
 ### Phase 4: Screens and polish
+
+Phase 4 need not wait for Phase 3 to finish. Work that only depends on
+what already exists (the player's health, inventory and ball time) can be
+designed and built in parallel; the infobar design starts during Phase 3.
 - [ ] Infobar (on-screen HUD), title screen, menus, level intro, win/lose screen, bonus screen, high scores, settings
 - [ ] Sound effects and music, save games, input remapping and gamepad support
 - [ ] Per-player inventory that lasts beyond a level, so ball time (and later health, lives and keys) carries over between levels and into saved games, as in the original. Until then the player entity holds it and every level starts with a full ball timer.
