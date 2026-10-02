@@ -11,6 +11,8 @@ default-run = "bugdom"
 bevy.workspace = true
 tracing.workspace = true
 bugdom_formats.workspace = true
+avian3d.workspace = true
+bevy_framepace.workspace = true
 
 [features]
 # Default to a native development build. Build releases with

@@ -3,7 +3,7 @@
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{Screenshot, save_to_disk};
 
-use crate::camera::{FlyCamera, place_fly_camera};
+use crate::camera::{CameraSystems, FlyCamera, GameCamera, fly};
 use crate::state::AppState;
 
 /// Environment variable naming a PNG file: when set, the game takes a
@@ -39,7 +39,7 @@ impl Plugin for CapturePlugin {
                 Some(pose) => {
                     app.insert_resource(pose).add_systems(
                         OnEnter(AppState::InGame),
-                        override_camera.after(place_fly_camera),
+                        override_camera.after(CameraSystems::Place),
                     );
                 }
                 None => warn!("{CAMERA_ENV}={value} is not x,y,z,yaw,pitch"),
@@ -104,11 +104,11 @@ fn parse_camera(value: &str) -> Option<CameraPose> {
 fn override_camera(
     mut commands: Commands,
     pose: Res<CameraPose>,
-    cameras: Query<Entity, With<FlyCamera>>,
+    cameras: Query<Entity, With<GameCamera>>,
 ) {
     let camera = FlyCamera::new(pose.yaw, pose.pitch);
     let transform = Transform::from_translation(pose.position).with_rotation(camera.rotation());
     for entity in &cameras {
-        commands.entity(entity).insert((camera.clone(), transform));
+        fly(&mut commands, entity, camera.clone(), transform);
     }
 }

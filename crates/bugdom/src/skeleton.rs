@@ -23,9 +23,19 @@ impl Plugin for SkeletonPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<AnimationSound>()
             .add_systems(Update, spawn_rigs)
-            .add_systems(FixedUpdate, advance_animations)
+            .add_systems(
+                FixedUpdate,
+                advance_animations.in_set(SkeletonSystems::Advance),
+            )
             .add_systems(PostUpdate, pose_joints.before(TransformSystems::Propagate));
     }
+}
+
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub enum SkeletonSystems {
+    /// Advances animations, in `FixedUpdate`. As in the original's
+    /// `MoveObjects`, an object's animation advances before it moves.
+    Advance,
 }
 
 /// A skeletal model. Its rig (joint entities and skinned meshes) is spawned

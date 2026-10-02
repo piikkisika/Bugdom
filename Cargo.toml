@@ -17,6 +17,9 @@ tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_w
 bugdom_formats = { path = "crates/bugdom_formats" }
 binrw = "0.15.2"
 thiserror = "2.0.21"
+# Colliders and spatial queries only; movement is our own (see CLAUDE.md).
+avian3d = { version = "0.7.0", default-features = false, features = ["3d", "f32", "parry-f32", "parallel"] }
+bevy_framepace = "0.22.0"
 
 [workspace.lints.clippy]
 # Bevy systems routinely take many parameters and complex query types.

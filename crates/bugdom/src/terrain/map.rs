@@ -296,17 +296,25 @@ pub fn face_normal(p1: Vec3, p2: Vec3, p3: Vec3) -> Vec3 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use bugdom_formats::rsrc::ResourceFork;
-
-    fn load(name: &str, with_ceiling: bool) -> TerrainMap {
+impl TerrainMap {
+    /// Loads a level's map straight from the original data, for tests.
+    pub fn load_for_tests(name: &str, with_ceiling: bool) -> Self {
+        use bugdom_formats::rsrc::ResourceFork;
         let path = bugdom_formats::original_data_dir().join(format!("Terrain/{name}.ter.rsrc"));
         let fork = ResourceFork::open(&path).expect("terrain file");
-        TerrainMap::new(
+        Self::new(
             &bugdom_formats::terrain::parse(&fork).expect("terrain"),
             with_ceiling,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn load(name: &str, with_ceiling: bool) -> TerrainMap {
+        TerrainMap::load_for_tests(name, with_ceiling)
     }
 
     #[test]

@@ -9,8 +9,10 @@ use bevy::prelude::*;
 
 use crate::assets::model::Model;
 use crate::assets::original_path;
+use crate::assets::skeleton::SkeletonAsset;
 use crate::assets::terrain::TerrainAsset;
 use crate::level::{CurrentLevel, GLOBAL_MODELS, NUM_LEVELS};
+use crate::player::PLAYER_SKELETON;
 
 /// Environment variable that picks the starting level (0 to 9), standing in
 /// for the original's level-select cheat until the menus exist.
@@ -45,6 +47,7 @@ pub struct LevelAssets {
     pub terrain: Handle<TerrainAsset>,
     /// Global model files first, then the level type's.
     pub models: Vec<Handle<Model>>,
+    pub player_skeleton: Handle<SkeletonAsset>,
 }
 
 fn starting_level() -> usize {
@@ -71,6 +74,7 @@ fn load_level_assets(mut commands: Commands, assets: Res<AssetServer>, level: Re
     commands.insert_resource(LevelAssets {
         terrain: assets.load(original_path(def.terrain)),
         models,
+        player_skeleton: assets.load(original_path(PLAYER_SKELETON)),
     });
 }
 
@@ -81,7 +85,8 @@ fn finish_loading(
     mut exit: MessageWriter<AppExit>,
 ) {
     let handles = std::iter::once(level_assets.terrain.id().untyped())
-        .chain(level_assets.models.iter().map(|h| h.id().untyped()));
+        .chain(level_assets.models.iter().map(|h| h.id().untyped()))
+        .chain(std::iter::once(level_assets.player_skeleton.id().untyped()));
     let mut ready = true;
     for id in handles {
         if let Some(bevy::asset::LoadState::Failed(error)) = assets.get_load_state(id) {

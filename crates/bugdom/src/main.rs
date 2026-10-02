@@ -14,6 +14,8 @@ fn main() -> AppExit {
             }),
             ..default()
         }))
+        // Paces frames to the display, which keeps input latency low.
+        .add_plugins(bevy_framepace::FramepacePlugin)
         .add_plugins((OriginalAssetsPlugin, GamePlugin))
         .run()
 }
