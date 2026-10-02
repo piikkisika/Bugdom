@@ -91,7 +91,7 @@ docs/                this plan, architecture notes, format notes
 - [ ] Build the reference C game from `original/` (CMake + SDL3) for side-by-side comparison
 - [x] Cargo workspace skeleton (BevyFlock-style lints, features and build profiles)
 - [x] Cloud session start hook (submodule, Linux dependencies, warm build cache)
-- [ ] CI (fmt, clippy, test)
+- [x] CI (fmt, clippy, docs, tests for non-Bevy crates; no full Bevy build)
 
 ### Phase 1: Data formats (parallel subagents, one per format)
 - [ ] Resource-fork reader
