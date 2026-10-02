@@ -1,5 +1,5 @@
 //! The player: spawning, the bug and ball forms' controllers, the bug's
-//! animation, getting hurt and the inventory.
+//! animation and kick, getting hurt and the inventory.
 //!
 //! Port of original/src/Player (MyGuy.c, Player_Bug.c, Player_Ball.c,
 //! Player_Control.c) and of the player's half of
@@ -11,6 +11,7 @@ mod bug;
 pub mod contact;
 mod health;
 mod inventory;
+mod kick;
 mod movement;
 mod tuning;
 
@@ -24,7 +25,9 @@ pub use ball::{
     has_headroom_to_unroll,
 };
 pub use bug::BugState;
-pub use contact::{BallHitEnemy, EnemyBopped, TouchedEnemy};
+pub use contact::{
+    BallHitEnemy, EnemyBopped, EnemyKicked, ItemKicked, KICK_ENEMY_DAMAGE, KICK_SPEED, TouchedEnemy,
+};
 pub use health::{
     HurtOutcome, HurtPlayer, INVINCIBILITY_DURATION, INVINCIBILITY_DURATION_DEATH, InvincibleTimer,
     KNOCK_RISE_SPEED, PLAYER_MAX_HEALTH, SHIELD_TIME, ShieldTimer, Torched, take_hurt,
@@ -54,6 +57,9 @@ impl Plugin for PlayerPlugin {
             .add_message::<TouchedEnemy>()
             .add_message::<BallHitEnemy>()
             .add_message::<EnemyBopped>()
+            .add_message::<EnemyKicked>()
+            .add_message::<ItemKicked>()
+            .add_message::<kick::KickLanded>()
             .add_systems(
                 OnEnter(AppState::InGame),
                 spawn_player
@@ -76,6 +82,7 @@ impl Plugin for PlayerPlugin {
                 (
                     health::count_down_invincibility,
                     bug::move_bug,
+                    kick::land_kicks,
                     ball::move_ball,
                     health::hurt_players,
                     health::count_down_shield,

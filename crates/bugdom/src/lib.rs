@@ -7,6 +7,7 @@ pub mod collision;
 pub mod combat;
 pub mod dev;
 pub mod effects;
+pub mod enemies;
 pub mod fences;
 pub mod input;
 pub mod items;
@@ -57,6 +58,7 @@ impl Plugin for GamePlugin {
             fences::FencePlugin,
             splines::SplinesPlugin,
             liquids::LiquidsPlugin,
+            enemies::EnemiesPlugin,
         ));
     }
 }
