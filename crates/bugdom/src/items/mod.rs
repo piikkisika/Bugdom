@@ -11,7 +11,9 @@
 //! [`RegisterItemKind::register_item_kind`] (the original's
 //! `gTerrainItemAddRoutines`).
 
+mod honey_tube;
 pub mod kind;
+mod pond;
 mod scenery;
 mod triggers;
 
@@ -55,7 +57,12 @@ impl Plugin for ItemsPlugin {
                 )
                     .run_if(in_state(AppState::InGame)),
             )
-            .add_plugins((scenery::plugin, triggers::plugin));
+            .add_plugins((
+                scenery::plugin,
+                pond::plugin,
+                honey_tube::plugin,
+                triggers::plugin,
+            ));
     }
 }
 
