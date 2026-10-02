@@ -4,12 +4,14 @@
 //! This crate deliberately has no Bevy dependency, so the converter and tests
 //! can use it without pulling in the engine.
 
+pub mod aiff;
 mod error;
 mod four_cc;
 pub mod mac_roman;
 pub mod rsrc;
 pub mod skeleton;
 pub mod terrain;
+pub mod tga;
 
 pub use error::{Error, Result, ResultExt};
 pub use four_cc::FourCC;
