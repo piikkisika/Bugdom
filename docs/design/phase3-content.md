@@ -269,5 +269,16 @@ Pending the owner's approval (merged; easy to revert):
    dead spider back to walking or spitting, leaving it alive in effect
    with only `CTYPE_MISC` collision.
 
+8. **Roach killed again** (`KillRoach`): a roach already dead ignores
+   further kills. The original restarts the death blend on every call, so
+   a dead roach in hurting particles freezes at the start of its fall.
+9. **Spline roach collision** (`MoveRoachOnSpline`): the original runs
+   the collision on whatever object moved last (`gCoord`/`gDelta` are not
+   set there); the port collides the roach itself, then puts it back on
+   its spline.
+10. **Gas cloud looks**: the clouds use the unfogged glow material, and
+    the Night level's fading of distant objects (`gAutoFadeStatusBits`) is
+    not ported yet.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
