@@ -653,7 +653,14 @@ fn update_king_ants(
         &EnemyModel,
     )>,
     models: ModelQuery,
-    mut staffs: Query<&mut Transform, (With<Staff>, Without<KingAntBrain>)>,
+    mut staffs: Query<
+        &mut Transform,
+        (
+            With<Staff>,
+            Without<KingAntBrain>,
+            Without<SkeletonAnimator>,
+        ),
+    >,
     culling: EnemyCulling,
 ) {
     let dt = time.delta_secs();

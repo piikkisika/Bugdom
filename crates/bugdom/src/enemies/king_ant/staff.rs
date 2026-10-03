@@ -28,7 +28,7 @@ use crate::effects::{
 use crate::math::GameRandom;
 use crate::objects::{ModelFile, ModelRef, ModelSpawner, ObjectMaterial, Shading};
 use crate::physics::{PreviousPosition, Velocity};
-use crate::skeleton::SkeletonRig;
+use crate::skeleton::{SkeletonAnimator, SkeletonRig};
 use crate::state::AppState;
 use crate::terrain::{LayerKind, TerrainMap};
 
@@ -234,7 +234,14 @@ fn staff_grip() -> Affine3A {
 /// for the flame, which is [`burn_staff`].
 pub(super) fn hold_staff(
     held: &mut KingStaff,
-    staffs: &mut Query<&mut Transform, (With<Staff>, Without<KingAntBrain>)>,
+    staffs: &mut Query<
+        &mut Transform,
+        (
+            With<Staff>,
+            Without<KingAntBrain>,
+            Without<SkeletonAnimator>,
+        ),
+    >,
     rig: &SkeletonRig,
     base: Affine3A,
     king: &Transform,
