@@ -69,6 +69,11 @@ pub struct Riding {
     pub seat: Vec3,
 }
 
+/// The child entity that carries a ride's skeleton and scale, for a ride
+/// that isn't an enemy (an enemy's is its [`EnemyModel`]).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RideModel(pub Entity);
+
 /// A ride's trigger takes the player on. Sent by the ride; ignored for the
 /// ball and for a killed player, as the original's triggers ignore the
 /// ball (`gPlayerMode == PLAYER_MODE_BALL`).
@@ -163,7 +168,7 @@ pub(super) fn leave_rides(
 #[allow(clippy::type_complexity)]
 pub(super) fn seat_riders(
     mut players: Query<(&Riding, &mut BugState, &PlayerModel, &mut Transform), With<Player>>,
-    rides: Query<Option<&EnemyModel>>,
+    rides: Query<(Option<&EnemyModel>, Option<&RideModel>)>,
     mut transforms: ParamSet<(
         Query<(&Transform, Option<&SkeletonRig>), Without<Player>>,
         Query<&mut Transform, Without<Player>>,
@@ -173,14 +178,14 @@ pub(super) fn seat_riders(
         if RideKind::of_state(*state) != Some(riding.kind) {
             continue;
         }
-        let Ok(ride_model) = rides.get(riding.ride) else {
+        let Ok((enemy_model, ride_model)) = rides.get(riding.ride) else {
             *state = BugState::Fall;
             continue;
         };
         let Some((joint, scale)) = joint_matrix(
             &transforms.p0(),
             riding.ride,
-            ride_model.map(|m| m.0),
+            ride_model.map(|m| m.0).or(enemy_model.map(|m| m.0)),
             riding.joint,
         ) else {
             continue;

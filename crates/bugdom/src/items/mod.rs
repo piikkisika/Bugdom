@@ -27,7 +27,7 @@ use bevy::prelude::*;
 use bugdom_formats::terrain::Item;
 
 pub use anthill::{GrabRootSwing, RootSwing};
-pub use triggers::AreaCompleted;
+pub use triggers::{AreaCompleted, ITEM_FLAG_USER1};
 
 use crate::assets::terrain::TerrainAsset;
 use crate::camera::{CameraSystems, FlyCamera, FollowCamera, GameCamera};

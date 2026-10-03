@@ -546,10 +546,11 @@ impl Bug<'_> {
         }
     }
 
-    /// Port of `MovePlayerBug_RideWaterBug`: the water bug drives itself
-    /// and has seated the bug ([`seat_riders`](super::ride::seat_riders)),
-    /// so all that is left is hopping off, which keeps the bug's own
-    /// velocity: the original never updates it while riding.
+    /// Port of `MovePlayerBug_RideWaterBug`: the water bug drives itself,
+    /// giving the bug its velocity (`player->Delta = gDelta` in
+    /// `DriveWaterBug`), and has seated it
+    /// ([`seat_riders`](super::ride::seat_riders)), so all that is left is
+    /// hopping off with that velocity.
     fn ride_water_bug(&mut self) {
         if hops_off(self.motion.input) {
             self.hop_off();
@@ -1294,7 +1295,7 @@ mod tests {
         assert_eq!(bug.motion.coord, seat);
         assert_eq!(bug.motion.steering, Vec2::ZERO);
 
-        // The jump keeps the bug's own (stale) velocity across the ground.
+        // The jump keeps the velocity the water bug gave it.
         let jump = ControlInput::for_tests(&[], &[Action::Jump]);
         bug.motion = bug.motion.next_tick(&jump);
         bug.tick();

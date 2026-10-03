@@ -44,7 +44,8 @@ pub use held::{
 pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
 pub use movement::InViscousTrap;
 pub use ride::{
-    LeftRide, MountRide, RideKind, Riding, dragonfly_rider_mask, hops_off, seat_model_matrix,
+    LeftRide, MountRide, RideKind, RideModel, Riding, dragonfly_rider_mask, hops_off,
+    seat_model_matrix,
 };
 pub use swing::{PrevRope, SwingingOn};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
