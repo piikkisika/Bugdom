@@ -1,14 +1,16 @@
-//! Pickups: the nut and its contents, powerups, the ladybug cage, and
-//! opening doors with keys.
+//! Pickups: the nut and its contents, powerups, the buddy bug, the ladybug
+//! cage, and opening doors with keys.
 //!
 //! Port of the nut, powerup and lawn door parts of
-//! original/src/Items/Triggers.c and the ladybug bonus of
-//! original/src/Items/Triggers2.c.
+//! original/src/Items/Triggers.c, the ladybug bonus of
+//! original/src/Items/Triggers2.c and the buddy bug of
+//! original/src/Player/MyGuy.c.
 //!
 //! The shells and the cage don't burst into shards yet
 //! (`QD3D_ExplodeGeometry`): they just vanish. The shard effect arrives
 //! with the other effects.
 
+mod buddy;
 mod door;
 mod ladybug;
 mod nut;
@@ -34,7 +36,7 @@ pub(super) fn plugin(app: &mut App) {
             Update,
             apply_material_overrides.run_if(in_state(AppState::InGame)),
         )
-        .add_plugins((nut::plugin, ladybug::plugin, door::plugin));
+        .add_plugins((nut::plugin, ladybug::plugin, door::plugin, buddy::plugin));
 }
 
 /// A nut cracked open with a tick inside. The tick's plugin spawns it
@@ -45,8 +47,8 @@ pub struct SpawnTick {
     pub position: Vec3,
 }
 
-/// A nut cracked open with the buddy bug inside (`CreateMyBuddy`). The
-/// buddy isn't ported yet, so nothing answers it.
+/// A nut cracked open with the buddy bug inside (`CreateMyBuddy`).
+/// `pickups/buddy.rs` answers it.
 #[derive(Message, Debug, Clone, Copy, PartialEq)]
 pub struct SpawnBuddy {
     /// The player whose buddy it is.
