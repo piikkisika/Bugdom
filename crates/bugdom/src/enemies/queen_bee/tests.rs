@@ -271,3 +271,19 @@ fn she_dies_once_when_killed() {
     // One group of sparks, for one death.
     assert_eq!(world.resource::<ParticleGroups>().iter().count(), 1);
 }
+
+#[test]
+fn the_systems_have_no_conflicting_parameters() {
+    fn check<M>(system: impl IntoSystem<(), (), M>) {
+        let mut world = World::new();
+        let mut system = IntoSystem::into_system(system);
+        // Panics on parameters that conflict.
+        system.initialize(&mut world);
+    }
+    check(ball_hit_queen_bee);
+    check(kick_queen_bee);
+    check(kill_hurt_queen_bee);
+    check(move_queen_bee);
+    check(spit::shoot_spit);
+    check(spit::move_queen_spit);
+}

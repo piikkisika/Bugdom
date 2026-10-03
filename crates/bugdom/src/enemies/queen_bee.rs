@@ -758,12 +758,10 @@ type ModelQuery<'w, 's> = Query<
 /// timer runs out in that frame. Here her move ends with her death.
 #[allow(clippy::too_many_arguments)]
 fn move_queen_bee(
-    mut commands: Commands,
     mut collision: EnemyCollision,
     map: Res<TerrainMap>,
-    mut groups: ResMut<ParticleGroups>,
-    mut random: ResMut<GameRandom>,
     mut completed: ResMut<AreaCompleted>,
+    mut killed_messages: MessageWriter<EnemyKilled>,
     mut queens: Query<
         (EnemyBody, &mut QueenBeeBrain, &mut QueenBases, &EnemyModel),
         Without<Player>,
@@ -825,13 +823,13 @@ fn move_queen_bee(
             false
         });
         if killed && !brain.is_dead() {
-            let parts = QueenParts {
-                entity: queen,
-                brain: &mut brain,
-                animator: Some(&mut animator),
-                at: body.transform.translation,
-            };
-            kill_queen_bee(&mut commands, &mut groups, &mut random, parts);
+            // The collision can't make the death's sparks while it reads
+            // the particles, so `KillQueenBee` runs in
+            // [`kill_hurt_queen_bee`], later in the same tick.
+            killed_messages.write(EnemyKilled {
+                enemy: queen,
+                knock: Vec3::ZERO,
+            });
             continue;
         }
 
