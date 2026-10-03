@@ -46,6 +46,8 @@ pub struct GameInputSystems;
 #[repr(u8)]
 pub enum Action {
     MorphPlayer,
+    /// Sends the buddy bug at the nearest enemy.
+    BuddyAttack,
     Jump,
     Kick,
     AutoWalk,
@@ -94,12 +96,18 @@ const KICK_KEYS: &[KeyCode] = &[KeyCode::AltLeft, KeyCode::AltRight];
 const KICK_KEYS: &[KeyCode] = &[KeyCode::ControlLeft, KeyCode::ControlRight];
 
 /// The default bindings (`gKeyBindings`).
-pub const DEFAULT_BINDINGS: [Binding; 12] = [
+pub const DEFAULT_BINDINGS: [Binding; 13] = [
     bind(
         Action::MorphPlayer,
         &[KeyCode::Space],
         Some(MouseButton::Middle),
         Some(GamepadButton::East),
+    ),
+    bind(
+        Action::BuddyAttack,
+        &[KeyCode::Tab],
+        None,
+        Some(GamepadButton::North),
     ),
     bind(
         Action::Jump,
