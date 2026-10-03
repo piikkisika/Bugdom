@@ -26,12 +26,17 @@ use crate::level::{CurrentLevel, LevelType};
 use crate::objects::{ModelFile, ModelRef, ModelSpawner, Shading};
 use crate::physics::{PreviousPosition, Velocity};
 use crate::player::PlayerSystems;
-use crate::splines::{OnSpline, RegisterSplineItemKind, SplineItemSpawn, SplineSystems, Splines};
+use crate::splines::{
+    OnSpline, RegisterSplineItemKind, SplineItemKinds, SplineItemSpawn, SplineSystems, Splines,
+};
 use crate::state::AppState;
 use crate::terrain::TerrainMap;
 
 pub(super) fn plugin(app: &mut App) {
-    app.register_item_kind(item::HONEYCOMB_PLATFORM, add_honeycomb_platform)
+    // The items are built before the splines, so the spline item table
+    // may not exist yet; `SplinesPlugin` keeps one that is already there.
+    app.init_resource::<SplineItemKinds>()
+        .register_item_kind(item::HONEYCOMB_PLATFORM, add_honeycomb_platform)
         .register_spline_item_kind(item::HONEYCOMB_PLATFORM, prime_honeycomb_platform)
         .add_systems(
             FixedUpdate,
@@ -174,7 +179,7 @@ fn platform_height(params: [u8; 4]) -> f32 {
 
 /// What a brick platform is while it can be set off; without `Trigger`
 /// once it has been.
-fn brick_kinds(trigger: bool) -> CollisionLayers {
+fn brick_kinds(trigger: bool) -> LayerMask {
     let mut kinds = LayerMask::from([
         CollisionKind::BlockShadow,
         CollisionKind::Impenetrable,
@@ -186,7 +191,7 @@ fn brick_kinds(trigger: bool) -> CollisionLayers {
     if trigger {
         kinds |= CollisionKind::Trigger;
     }
-    CollisionLayers::new(kinds, LayerMask::NONE)
+    kinds
 }
 
 /// Port of `AddHoneycombPlatform`. `params[0]` bit 0 makes it steel,
@@ -229,8 +234,7 @@ fn add_honeycomb_platform(
         ));
     } else {
         commands.entity(platform).insert((
-            solid_object(vec![shape], LayerMask::NONE, SolidSides::ALL),
-            brick_kinds(true),
+            solid_object(vec![shape], brick_kinds(true), SolidSides::ALL),
             Trigger {
                 sides: SolidSides::TOP,
                 solid: true,
@@ -282,7 +286,9 @@ fn move_honeycomb_platforms(
         match platform.step(&mut y, &mut velocity.y, floor, dt) {
             PlatformStep::Moved => {}
             PlatformStep::Resurfacing => {
-                commands.entity(entity).insert(brick_kinds(true));
+                commands
+                    .entity(entity)
+                    .insert(CollisionLayers::new(brick_kinds(true), LayerMask::NONE));
             }
             PlatformStep::Gone => {
                 commands.entity(entity).despawn();
@@ -308,7 +314,9 @@ fn drop_honeycomb_platforms(
             continue;
         };
         platform.state = PlatformState::Fall;
-        commands.entity(hit.trigger).insert(brick_kinds(false));
+        commands
+            .entity(hit.trigger)
+            .insert(CollisionLayers::new(brick_kinds(false), LayerMask::NONE));
     }
 }
 

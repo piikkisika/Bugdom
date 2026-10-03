@@ -99,8 +99,8 @@ impl Plunger {
 }
 
 /// A plunger's collision kinds before and after it is pushed.
-fn plunger_kinds(pushed: bool) -> CollisionLayers {
-    let kinds = if pushed {
+fn plunger_kinds(pushed: bool) -> LayerMask {
+    if pushed {
         LayerMask::from([CollisionKind::Misc, CollisionKind::BlockCamera])
     } else {
         LayerMask::from([
@@ -110,8 +110,7 @@ fn plunger_kinds(pushed: bool) -> CollisionLayers {
             CollisionKind::AutoTargetJump,
             CollisionKind::BlockCamera,
         ])
-    };
-    CollisionLayers::new(kinds, LayerMask::NONE)
+    }
 }
 
 /// Port of `AddDetonator`. `params[0]` is the detonator's ID and
@@ -180,8 +179,7 @@ fn add_detonator(
                 plunging: false,
                 bottom_y: base.y - PLUNGER_DOWN_OFFSET,
             },
-            solid_object(vec![PLUNGER_BOX], LayerMask::NONE, SolidSides::ALL),
-            plunger_kinds(pushed),
+            solid_object(vec![PLUNGER_BOX], plunger_kinds(pushed), SolidSides::ALL),
             Trigger {
                 sides: SolidSides::TOP,
                 solid: true,
