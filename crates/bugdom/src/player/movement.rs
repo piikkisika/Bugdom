@@ -36,6 +36,15 @@ use crate::math::{yaw_forward, yaw_from_point_to_point, yaw_of};
 use crate::physics::{GroundContact, PreviousPosition, RidingPlatform, Velocity};
 use crate::terrain::TerrainMap;
 
+/// How much of its top speed the player keeps while caught in something
+/// viscous, such as the queen bee's honey (`VISCOUS_SPEED_MULTIPLIER`).
+const VISCOUS_SPEED_MULTIPLIER: f32 = 0.17;
+
+/// The player is caught in something viscous (`STATUS_BIT_INVISCOUSTRAP`),
+/// as of its last collision check, which slows its next move.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct InViscousTrap;
+
 /// Falling into water faster than this, in units per second, splashes.
 const ENTRY_SPLASH_SPEED: f32 = 800.0;
 /// The splash's force and sound volume (`MakeSplash`).
@@ -89,6 +98,7 @@ pub(super) struct PlayerData {
     pub ground: &'static mut GroundContact,
     pub underwater: Option<&'static Underwater>,
     pub platform: Option<&'static RidingPlatform>,
+    pub viscous: Has<InViscousTrap>,
     pub dying: Has<Dying>,
     pub health: &'static mut Health,
     pub invincible: &'static mut InvincibleTimer,
@@ -131,6 +141,9 @@ pub(super) struct Motion<'a> {
     /// The moving platform under the player and its velocity, as of the
     /// last collision check (`MPlatform`).
     pub platform: Option<(Entity, Vec3)>,
+    /// Caught in something viscous, as of the last collision check
+    /// (`STATUS_BIT_INVISCOUSTRAP`).
+    pub viscous: bool,
     /// Killed, and waiting to start again (`gPlayerGotKilledFlag`).
     pub killed: bool,
     /// Triggers that went off and stopped being solid this tick.
@@ -205,6 +218,7 @@ impl MotionContext<'_, '_> {
                 .map(|t| self.damages.get(t.entity).map_or(0.0, |d| d.0))
                 .collect(),
             underwater: player.underwater.copied(),
+            viscous: player.viscous,
             // The platform moved since the last tick; its velocity is as
             // the candidates gathered it this tick.
             platform: player.platform.and_then(|p| {
@@ -261,6 +275,14 @@ impl Motion<'_> {
                 Some(underwater) => entity.insert(underwater),
                 None => entity.remove::<Underwater>(),
             };
+        }
+        if player.viscous != self.viscous {
+            let mut entity = commands.entity(player.entity);
+            if self.viscous {
+                entity.insert(InViscousTrap);
+            } else {
+                entity.remove::<InViscousTrap>();
+            }
         }
         let platform = self.platform.map(|(entity, _)| RidingPlatform(entity));
         if player.platform.copied() != platform {
@@ -320,13 +342,15 @@ impl Motion<'_> {
     /// (original/src/Player/Player_Control.c). In a liquid the player floats
     /// just under the top of its volume, and the ball turns back into the
     /// bug to swim; falling fast into water splashes. A moving platform
-    /// underfoot carries the player. Viscous traps arrive with that feature.
+    /// underfoot carries the player, and something viscous slows it.
     pub fn move_and_collide(&mut self, no_control: bool) {
         let tuning = self.tuning;
         let form = tuning.form(self.form);
         // From the last check, before this move's.
         let max_speed = if self.underwater.is_some() {
             tuning.swim_max_speed
+        } else if self.viscous {
+            form.max_speed * VISCOUS_SPEED_MULTIPLIER
         } else {
             form.max_speed
         };
@@ -478,7 +502,6 @@ impl Motion<'_> {
     /// touched or bopped. A killed player only bumps into solid things.
     ///
     /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
-    /// Viscous objects arrive with that feature.
     fn collide_with_objects(&mut self, dt: f32) {
         let mask = if self.killed {
             CollisionKind::Misc.into()
@@ -515,6 +538,7 @@ impl Motion<'_> {
         self.underwater = None;
         // Not on a platform unless one is underfoot in this check.
         self.platform = None;
+        self.viscous = false;
         let candidates = self.candidates;
         for hit in &result.hits {
             let target = &candidates[hit.target];
@@ -531,6 +555,9 @@ impl Motion<'_> {
                 self.coord.z = self.old_coord.z;
             }
 
+            if target.kinds.has_all(CollisionKind::Viscous) {
+                self.viscous = true;
+            }
             // Only landing on it puts the player on a moving platform.
             if target.kinds.has_all(CollisionKind::MovingPlatform)
                 && hit.sides.contains(SolidSides::BOTTOM)
@@ -730,6 +757,7 @@ pub(super) mod bench {
                 candidate_damage: vec![0.0; candidates.len()],
                 underwater: None,
                 platform: None,
+                viscous: false,
                 killed: false,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
@@ -849,6 +877,29 @@ mod tests {
         motion.candidate_damage = vec![damage; targets.len()];
         motion.move_and_collide(false);
         motion
+    }
+
+    #[test]
+    fn something_viscous_slows_the_next_move() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        let honey = around(&bench, &[CollisionKind::Viscous]);
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &honey);
+        motion.move_and_collide(true);
+        assert!(motion.viscous);
+
+        // The trap from the last check limits this move's speed.
+        let max_speed = bench.tuning.form(PlayerForm::Bug).max_speed;
+        let mut motion = motion.next_tick(&input);
+        motion.velocity = Vec3::new(max_speed, 0.0, 0.0);
+        motion.move_and_collide(true);
+        let limit = max_speed * VISCOUS_SPEED_MULTIPLIER;
+        assert!((motion.speed - limit).abs() < 1e-3, "{}", motion.speed);
+
+        // Out of it, the full speed is back on the move after.
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &[]);
+        motion.move_and_collide(true);
+        assert!(!motion.viscous);
     }
 
     #[test]

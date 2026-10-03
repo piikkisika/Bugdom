@@ -41,6 +41,7 @@ pub use held::{
     player_layers,
 };
 pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
+pub use movement::InViscousTrap;
 pub use ride::{
     LeftRide, MountRide, RideKind, Riding, dragonfly_rider_mask, hops_off, seat_model_matrix,
 };
@@ -467,6 +468,7 @@ fn respawn_dead_players(
                 Dying,
                 Torched,
                 crate::liquids::Underwater,
+                InViscousTrap,
                 EatenBy,
                 CarriedBy,
             )>()
