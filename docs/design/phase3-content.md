@@ -290,5 +290,10 @@ Pending the owner's approval (merged; easy to revert):
 13. **Ball or kick on the dead queen**: ignored, which is also what the
     original's collision kinds lead to.
 
+14. **King ant killed mid-collision**: as for the flying bee (1), a hurt
+    that kills him during his own collision ends that tick's move. The
+    original carries on with the old state, which could set the dying
+    king walking (and shooting) again with only `Misc` collision.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
