@@ -280,5 +280,15 @@ Pending the owner's approval (merged; easy to revert):
     the Night level's fading of distant objects (`gAutoFadeStatusBits`) is
     not ported yet.
 
+11. **Queen bee killed mid-collision**: as for the flying bee (1), a
+    hurt that kills her during her collision ends her move, so a timer
+    running out in the same frame can't start a spit, a flight or standing
+    up instead of dying.
+12. **Queen bee with no next base**: the original reads past the end of
+    its base list; the port logs a warning and she lands where she is.
+    The real level's bases (0–8) never reach this.
+13. **Ball or kick on the dead queen**: ignored, which is also what the
+    original's collision kinds lead to.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
