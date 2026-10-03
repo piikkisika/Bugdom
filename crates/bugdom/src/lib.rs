@@ -33,9 +33,14 @@ pub struct GamePlugin;
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
         // The original seeds its generator from the clock at boot.
+        #[cfg(not(target_family = "wasm"))]
         let seed = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_secs() as u32);
+
+        #[cfg(target_family = "wasm")]
+        let seed = 0;
+
         app.insert_resource(math::GameRandom::from_seed(seed));
         // Bevy takes at most 15 plugins per tuple, so they are grouped.
         // Engine: states, simulation, rendering and tools.

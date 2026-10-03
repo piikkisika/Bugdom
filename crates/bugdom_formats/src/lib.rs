@@ -26,7 +26,11 @@ use std::path::PathBuf;
 /// for tests and development builds, not for locating data at runtime in a
 /// packaged game.
 pub fn original_data_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../original/Data")
+    if cfg!(target_family = "wasm") {
+        PathBuf::from("assets/Data")
+    } else {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../original/Data")
+    }
 }
 
 #[cfg(test)]
