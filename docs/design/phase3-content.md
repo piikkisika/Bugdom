@@ -332,5 +332,22 @@ Pending the owner's approval (merged; easy to revert):
 23. **Rolling boulder with several players**: a waiting boulder sets off
     toward the nearest player in range.
 
+24. **Bat with several players** (`MakeBat`): it dives on the player
+    whose dragonfly called it, rather than on `gMyCoord`.
+25. **Dragonfly losing its rider** without being told: it lets itself go
+    (`PlayerOffDragonfly`). The original can't reach this case.
+26. **Dragonflies and water bugs on the wrong level** log a warning and
+    are skipped, where the original stops the game (as 21).
+27. **A buddy per player** (`BuddyFollowsMe`): each player can have its
+    own following buddy; the original has one.
+28. **Buddy's climb steadying**: halving its vertical speed once per frame
+    when level with its enemy becomes the same rate per second at 60 fps
+    (as 4).
+29. **Lawn and Night doors on the wrong level** log a warning and are
+    skipped (as 21).
+30. **Water bug's nose lift** (`DriveWaterBug`): it goes by the speed
+    gained per 60 fps frame, as the original's per-frame difference does at
+    that rate (as 4).
+
 Any others that come up during the ports are listed here for approval
 before they merge.

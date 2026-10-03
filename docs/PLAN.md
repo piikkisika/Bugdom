@@ -173,17 +173,17 @@ also lists the approved differences from the original.
   - [x] Queen bee (boss; add `BossHealthBar`; spawns larvae with `make_larva_enemy`)
   - [x] Roach (gas particles)
   - [x] Spider (web bullet and sphere: `Hold::Webbed`)
-- [ ] Items, traps, triggers, rides, spline objects (each package has its file in `items/`, empty until ported)
+- [x] Items, traps, triggers, rides, spline objects (each package has its file in `items/`, empty until ported)
   - [x] Scenery for every level type (rocks, grass, pond plants, dock, trees, wood posts, faucet, honey tubes)
   - [x] Pickups: nuts and their contents, powerups, the ladybug cage, opening the lawn door
-  - [ ] Buddy bug: 14 nuts on the Lawn alone hold it (`SpawnBuddy` is sent, nothing answers it yet)
-  - [ ] Night doors (`add_lawn_door` still only spawns Lawn doors)
+  - [x] Buddy bug: 14 nuts on the Lawn alone hold it (`SpawnBuddy` is sent, nothing answers it yet)
+  - [x] Night doors (`add_lawn_door` still only spawns Lawn doors)
   - [x] Hive: honeycomb platform, firecracker, detonator (sets `DetonatorsBlown`), hive door, floor spike, shockwave
   - [x] Ant Hill: water valve, fire wall, ant pipes, king water pipe, root swing (and the bug swinging on it)
   - [x] Traps: foot (spline), thorn bush, stump and its hive, rolling boulder
-  - [ ] Dragonfly ride and the bat (the bat eats the player with `Hold::Eaten { follow: true }`; the hive gets `BossHealthBar` on Dragonfly Attack)
-  - [ ] Water bug ride
-  - [ ] Shards (`QD3D_ExplodeGeometry`): done for the cage, ticks, ant rocks, web spheres and firecrackers; the nut shells still just vanish
+  - [x] Dragonfly ride and the bat (the bat eats the player with `Hold::Eaten { follow: true }`; the hive gets `BossHealthBar` on Dragonfly Attack)
+  - [x] Water bug ride
+  - [x] Shards (`QD3D_ExplodeGeometry`): nut shells, the cage, ticks, ant rocks, web spheres and firecrackers
 - [x] Effects and particles (`Items/Effects.c`): the particle groups, ripples and splashes, then each effect:
   - [x] water splashes (falling into water, jumping out) and swim ripples (`Player_Control.c`, `Player_Bug.c`)
   - [x] checkpoint sparks (`DoTrig_Checkpoint`)
