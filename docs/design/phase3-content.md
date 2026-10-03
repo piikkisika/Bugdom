@@ -319,5 +319,12 @@ Pending the owner's approval (merged; easy to revert):
 21. **Ant Hill items on the wrong level** log a warning and are skipped,
     where the original stops the game.
 
+22. **Rolling boulder's turn** (`MoveRollingBoulder`): the original
+    scales its turn by the frame time twice, so how fast the axle turns
+    depends on the frame rate; the port uses its 60 fps value, as for the
+    firefly (4).
+23. **Rolling boulder with several players**: a waiting boulder sets off
+    toward the nearest player in range.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
