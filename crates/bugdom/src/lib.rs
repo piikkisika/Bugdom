@@ -19,6 +19,7 @@ pub mod objects;
 pub mod pause;
 pub mod physics;
 pub mod player;
+pub mod rides;
 pub mod skeleton;
 pub mod splines;
 pub mod state;
@@ -61,6 +62,7 @@ impl Plugin for GamePlugin {
             splines::SplinesPlugin,
             liquids::LiquidsPlugin,
             enemies::EnemiesPlugin,
+            rides::RidesPlugin,
         ));
     }
 }
