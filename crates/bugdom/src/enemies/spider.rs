@@ -25,7 +25,7 @@ use super::{
     death_enemy_collision_mask, default_enemy_collision_mask, detach_enemy_from_spline, move_enemy,
     per_frame_friction,
 };
-use crate::collision::{CollisionBox, CollisionKind, SolidSides};
+use crate::collision::{CollisionBox, CollisionKind, CollisionSystems, SolidSides};
 use crate::combat::Health;
 use crate::items::{ItemSpawn, RegisterItemKind, forget_terrain_item, kind};
 use crate::level::{CurrentLevel, LevelType};
@@ -58,14 +58,16 @@ impl Plugin for SpiderPlugin {
                     // The player's collision reaches the spiders and sets
                     // off the web before they move, as in the original's
                     // frame.
-                    (
-                        ball_hit_spiders,
-                        web::web_bullet_hits,
-                        move_spiders,
-                        web::move_web_bullets,
-                    )
+                    (ball_hit_spiders, web::web_bullet_hits, move_spiders)
                         .chain()
                         .in_set(EnemySystems::Move),
+                    // The web bullets are triggers, early in the object
+                    // list (`TRIGGER_SLOT`): they fly before the player
+                    // moves, so that the player's collision sees how far
+                    // they came this tick.
+                    web::move_web_bullets
+                        .before(CollisionSystems::Gather)
+                        .run_if(in_state(AppState::InGame)),
                     kill_hurt_spiders.in_set(EnemySystems::Killed),
                     move_spiders_on_spline.in_set(SplineSystems::Move),
                     web::move_web_spheres
