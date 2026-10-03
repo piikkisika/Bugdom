@@ -261,5 +261,13 @@ Approved by the owner:
    rate (6 per second) rather than the original's 7, except from the blood
    suck itself, which already uses 7.
 
+Pending the owner's approval (merged; easy to revert):
+
+7. **Spider killed mid-collision** (`MoveSpider_Walk`, `MoveSpider_Jump`):
+   as for the flying bee (1), a spider that a hurt kills during its
+   collision ends its move. The original carries on and can switch the
+   dead spider back to walking or spitting, leaving it alive in effect
+   with only `CTYPE_MISC` collision.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
