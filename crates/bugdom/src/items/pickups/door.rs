@@ -1,8 +1,8 @@
-//! Opening the lawn doors with their keys.
+//! Opening the doors of the Lawn and Night levels with their keys.
 //!
 //! Port of `MoveLawnDoor` and `DoTrig_LawnDoor`
-//! (original/src/Items/Triggers.c). The door itself is spawned by
-//! `AddLawnDoor` in `items/triggers.rs`.
+//! (original/src/Items/Triggers.c), which serve both levels' doors. The
+//! door itself is spawned by `AddLawnDoor` in `items/triggers.rs`.
 
 use std::f32::consts::FRAC_PI_2;
 
