@@ -12,8 +12,7 @@
 //! is handled by the player's collision, so the tick answers only
 //! [`EnemyBopped`], [`EnemyKicked`] and [`EnemyKilled`].
 //!
-//! `KillTick` bursts the model into shards (`QD3D_ExplodeGeometry`); that
-//! effect isn't ported yet, so a killed tick just vanishes.
+//! `KillTick` bursts the model into shards (`QD3D_ExplodeGeometry`).
 
 use std::f32::consts::TAU;
 
@@ -25,6 +24,7 @@ use super::{
     EnemySkeleton, EnemySpawner, EnemySystems, default_enemy_collision_mask, nearest_player,
 };
 use crate::collision::{CollisionBox, CollisionKind, SolidSides};
+use crate::effects::{Explosion, ShardMode, explode_geometry};
 use crate::items::pickups::SpawnTick;
 use crate::math::{GameRandom, turn_toward, yaw_forward, yaw_of};
 use crate::objects::{ModelFile, ModelRef};
@@ -58,6 +58,13 @@ const TICK_TURN_SPEED: f32 = 3.0;
 /// A tick's speed, in units per second (`TICK_CHASE_SPEED`).
 const TICK_CHASE_SPEED: f32 = 100.0;
 const TICK_HEALTH: f32 = 1.0;
+/// `QD3D_ExplodeGeometry(theNode, 500, 0, 1, .3)` in `KillTick`.
+const TICK_SHARDS: Explosion = Explosion {
+    force: 500.0,
+    mode: ShardMode::NONE,
+    density: 1,
+    decay: 0.3,
+};
 /// What touching a tick costs the player (`TICK_DAMAGE`).
 const TICK_DAMAGE: f32 = 0.05;
 const TICK_SCALE: f32 = 1.2;
@@ -152,10 +159,13 @@ fn bop_ticks(
     }
 }
 
-/// Port of `KillTick` (original/src/Enemies/Enemy_Tick.c): the tick is
-/// deleted at once. Repeats are ignored.
+/// Port of `KillTick` (original/src/Enemies/Enemy_Tick.c): the tick bursts
+/// into shards and is deleted at once. Repeats are ignored.
 fn kill_tick(commands: &mut Commands, tick: Entity) {
-    // Sound and effect: `QD3D_ExplodeGeometry`, not ported yet.
+    if commands.get_entity(tick).is_err() {
+        return;
+    }
+    commands.queue(explode_geometry(tick, TICK_SHARDS));
     commands.entity(tick).try_despawn();
 }
 

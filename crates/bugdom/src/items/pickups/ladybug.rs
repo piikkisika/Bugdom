@@ -9,6 +9,8 @@ use avian3d::prelude::TransformInterpolation;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
+use crate::effects::{Explosion, ShardMode, explode_geometry};
+
 use super::MaterialOverride;
 use crate::assets::skeleton::SkeletonAsset;
 use crate::collision::{
@@ -281,7 +283,16 @@ fn open_cages(
     }
 }
 
-/// Releases the ladybug and removes the cage; the posts stay but never
+/// `QD3D_ExplodeGeometry(cage, 700, SHARD_MODE_BOUNCE |
+/// SHARD_MODE_NULLSHADER, 1, .6)` in `KickLadyBugBox`.
+const CAGE_SHARDS: Explosion = Explosion {
+    force: 700.0,
+    mode: ShardMode::BOUNCE.union(ShardMode::NULL_SHADER),
+    density: 1,
+    decay: 0.6,
+};
+
+/// Releases the ladybug and bursts the cage; the posts stay but never
 /// come back. Port of `KickLadyBugBox`, apart from its `GetLadyBug`, which
 /// the caller does for the player who opened it.
 fn kick_ladybug_box(
@@ -312,6 +323,7 @@ fn kick_ladybug_box(
         );
     }
     forget_terrain_item(&mut commands.entity(state.posts));
+    commands.queue(explode_geometry(cage, CAGE_SHARDS));
     commands.entity(cage).despawn();
 }
 

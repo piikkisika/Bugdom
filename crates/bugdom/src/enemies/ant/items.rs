@@ -15,6 +15,8 @@ use avian3d::prelude::{CollisionLayers, LayerMask, TransformInterpolation};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
+use crate::effects::{Explosion, ShardMode, explode_geometry};
+
 use super::AntBrain;
 use crate::collision::{CollisionBox, CollisionKind, SolidSides, solid_object};
 use crate::combat::Damage;
@@ -339,14 +341,21 @@ pub fn fly(
     Landing::Flying
 }
 
+/// `QD3D_ExplodeGeometry(theNode, 500, 0, 1, .3)` in `MoveAntRock`.
+const ROCK_SHARDS: Explosion = Explosion {
+    force: 500.0,
+    mode: ShardMode::NONE,
+    density: 1,
+    decay: 0.3,
+};
+
 /// Moves the thrown spears and rocks. Leaving the item window
 /// (`TrackTerrainItem`) is `DespawnOutOfRange`.
 ///
 /// Port of `MoveAntSpear` and `MoveAntRock`
 /// (original/src/Enemies/Enemy_Ant.c). A spear in the ground stays there as
-/// a plain obstacle; a rock that lands is gone. The original shatters the
-/// rock's geometry into flying shards (`QD3D_ExplodeGeometry`), which
-/// isn't ported yet.
+/// a plain obstacle; a rock that lands shatters into shards
+/// (`QD3D_ExplodeGeometry`) and is gone.
 pub(super) fn move_thrown_items(
     mut commands: Commands,
     time: Res<Time>,
@@ -389,6 +398,7 @@ pub(super) fn move_thrown_items(
             }
             Landing::Shattered => {
                 // Sound: EFFECT_HITDIRT at the rock.
+                commands.queue(explode_geometry(entity, ROCK_SHARDS));
                 commands.entity(entity).despawn();
             }
         }

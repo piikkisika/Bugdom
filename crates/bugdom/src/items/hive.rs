@@ -7,8 +7,8 @@
 //! platform parts of original/src/Items/Items2.c, and the shockwave and
 //! floor spike parts of original/src/Items/Traps.c.
 //!
-//! Exploding firecrackers don't burst into shards yet
-//! (`QD3D_ExplodeGeometry`): they just vanish in their sparks.
+//! Exploding firecrackers burst into shards (`QD3D_ExplodeGeometry`)
+//! amid their sparks.
 
 mod detonator;
 mod firecracker;

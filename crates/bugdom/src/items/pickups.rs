@@ -5,9 +5,8 @@
 //! original/src/Items/Triggers.c and the ladybug bonus of
 //! original/src/Items/Triggers2.c.
 //!
-//! The shells and the cage don't burst into shards yet
-//! (`QD3D_ExplodeGeometry`): they just vanish. The shard effect arrives
-//! with the other effects.
+//! The cage bursts into shards (`QD3D_ExplodeGeometry`); the nut's shell
+//! doesn't yet, it just vanishes.
 
 mod door;
 mod ladybug;

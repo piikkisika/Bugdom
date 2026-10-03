@@ -9,6 +9,8 @@
 use avian3d::prelude::LayerMask;
 use bevy::prelude::*;
 
+use crate::effects::{Explosion, ShardMode, explode_geometry};
+
 use super::model;
 use crate::collision::{
     CollisionBox, CollisionBoxes, CollisionKind, CollisionSystems, SolidSides, solid_object,
@@ -215,6 +217,15 @@ fn explode_firecrackers(
     }
 }
 
+/// `QD3D_ExplodeGeometry(fc, 2000, SHARD_MODE_BOUNCE, 1, .6)` in
+/// `ExplodeFirecracker`.
+const FIRECRACKER_SHARDS: Explosion = Explosion {
+    force: 2000.0,
+    mode: ShardMode::BOUNCE,
+    density: 1,
+    decay: 0.6,
+};
+
 /// The firecracker goes for good in two bursts of sparks. Port of
 /// `ExplodeFirecracker`; the shockwave is the caller's.
 fn explode(
@@ -224,6 +235,7 @@ fn explode(
     groups: &mut ParticleGroups,
     random: &mut GameRandom,
 ) {
+    commands.queue(explode_geometry(entity, FIRECRACKER_SHARDS));
     let mut firecracker = commands.entity(entity);
     forget_terrain_item(&mut firecracker);
     firecracker.despawn();

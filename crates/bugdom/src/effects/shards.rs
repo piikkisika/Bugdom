@@ -52,6 +52,10 @@ impl ShardMode {
     /// Drawn with their plain colours (`SHARD_MODE_NULLSHADER`).
     pub const NULL_SHADER: Self = Self(1 << 3);
 
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
     pub fn contains(self, other: Self) -> bool {
         self.0 & other.0 == other.0
     }

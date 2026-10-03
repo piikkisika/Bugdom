@@ -10,14 +10,16 @@
 //! ([`ReleasePlayer`]) when its time is up, and goes away as soon as the
 //! player is out of the web some other way.
 //!
-//! The sphere bursts into shards when it goes (`QD3D_ExplodeGeometry`);
-//! shards aren't ported yet, so it just vanishes.
+//! The sphere bursts into shards once the player is out
+//! (`QD3D_ExplodeGeometry`).
 
 use std::f32::consts::PI;
 
 use avian3d::prelude::TransformInterpolation;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
+
+use crate::effects::{Explosion, ShardMode, explode_geometry};
 
 use super::SPIDER_SCALE;
 use crate::collision::{
@@ -56,6 +58,15 @@ const SPHERE_WOBBLE_RATE: Vec3 = Vec3::new(6.0, 8.0, 5.0);
 const SPHERE_WOBBLE: f32 = 0.1;
 
 /// A web bullet in flight.
+/// `QD3D_ExplodeGeometry(theNode, 700, SHARD_MODE_BOUNCE |
+/// SHARD_MODE_NULLSHADER, 1, .6)` in `MoveWebSphere`.
+const SPHERE_SHARDS: Explosion = Explosion {
+    force: 700.0,
+    mode: ShardMode::BOUNCE.union(ShardMode::NULL_SHADER),
+    density: 1,
+    decay: 0.6,
+};
+
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct WebBullet {
     /// Seconds left before it is gone (`Health`).
@@ -364,6 +375,7 @@ pub(super) fn move_web_spheres(
                 continue;
             }
             SphereOutcome::PlayerGotOut => {
+                commands.queue(explode_geometry(entity, SPHERE_SHARDS));
                 commands.entity(entity).despawn();
                 continue;
             }
