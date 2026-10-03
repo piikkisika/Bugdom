@@ -256,6 +256,14 @@ gameplay; each is easy to revert):
 4. **Firefly carry climb**: above the carry height the original halves a
    fast rise once per frame; the port applies it per second at the
    original's 60 fps (`0.5^(dt·60)`).
+5. **Mosquito killed while sucking** (`KillMosquito`): the original
+   stands the bug up whatever its state, even a dead bug, which ends the
+   death animation and gives the player control until it starts again.
+   The port leaves a dying bug alone. Reverting is one condition in
+   `Victims::stand_up` (enemies/mosquito.rs).
+6. **Mosquito letting go**: the bug blends into standing at the bug's own
+   rate (6 per second) rather than the original's 7, except from the blood
+   suck itself, which already uses 7.
 
 Any others that come up during the ports are listed here for approval
 before they merge.
