@@ -661,7 +661,9 @@ mod tests {
         let right = ControlInput::for_tests(&[Action::Right], &[]);
         let turn = steering_turn(&right, DragonFlySteering::Normal, DT);
         // 1600 steering units per second at 0.0018 radians each.
-        assert!((turn.x - 1600.0 * DT * KEY_TURN_PER_UNIT).abs() < 1e-6);
+        // The keys' 0.048 radians per tick just reach the turn limit.
+        let expected = (1600.0 * DT * KEY_TURN_PER_UNIT).min(MAX_TURN_SPEED * DT);
+        assert!((turn.x - expected).abs() < 1e-6);
         assert_eq!(turn.y, 0.0);
         // Forward pitches the nose down.
         let forward = ControlInput::for_tests(&[Action::Forward], &[]);
