@@ -1,7 +1,17 @@
 # Phase 4 design: the screens and the game flow
 
-Status: **draft, for review**. Items marked **[review]** change shared code
-or need a decision.
+Status: **approved** (2026-10-03), with these decisions:
+
+- **Saving comes last.** Everything written to disk (saved games, the
+  high score table, the settings) is the last step (§4, step 8). Until
+  then high scores and settings last only while the game runs, and where
+  the files go (§5.1) is decided at that step.
+- **Widescreen:** the screens keep their 4:3 framing and show more to the
+  sides on wider windows, as the levels do (§5.2).
+
+Not started yet: the owner asked for the plan only, for now.
+
+Items marked **[review]** change shared code.
 
 Milestone: the game runs as the original does, from the logos through the
 title screen and main menu, then each level (its intro, the level, the
@@ -87,22 +97,24 @@ Each step lands as its own commits with tests and a screenshot.
    scene (`DoLawn1Intro` … `DoAntHill1Intro`).
 5. Bonus screen and the score: the tallies and the save prompt (saving
    itself comes with save games).
-6. Win and lose screens; high scores with name entry.
+6. Win and lose screens; high scores with name entry (kept in memory
+   until step 8).
 7. Pause menu (completing `pause.rs`), settings, about and legal screens,
    the Pangea logo, and the level select cheat (F10).
-8. Save games and file select, with the per-player inventory that lasts
-   between levels.
+8. Everything on disk, last: save games and file select, the per-player
+   inventory that lasts between levels and into saved games, and keeping
+   the high scores and settings.
 
 Sound and music, input remapping and modding stay the later Phase 4
 items.
 
-## 5. Open questions **[review]**
+## 5. Decisions
 
-1. **Where files go.** High scores, settings and saved games need a
-   per-user directory. Bevy has no helper for it; the `dirs` crate is the
-   usual choice (a new dependency), or a fixed path next to the game.
-   This only matters from step 6.
-2. **Screen resolution.** The original draws the screens at 640×480,
-   stretched; Iliyan Jorio's port keeps their 4:3 framing on widescreen.
-   Proposed: frame the 3D screens for 4:3 and show more to the sides, as
-   the levels do (Hor+).
+1. **Where files go** (open until step 8). High scores, settings and
+   saved games need a per-user directory. Bevy has no helper for it; the
+   `dirs` crate is the usual choice (a new dependency, to be approved), or
+   a fixed path next to the game.
+2. **Screen resolution** (approved). The original draws the screens at
+   640×480, stretched; Iliyan Jorio's port keeps their 4:3 framing on
+   widescreen. The 3D screens are framed for 4:3 and show more to the
+   sides, as the levels do (Hor+).
