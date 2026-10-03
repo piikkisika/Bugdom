@@ -26,6 +26,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bugdom_formats::terrain::Item;
 
+pub use anthill::{GrabRootSwing, RootSwing};
 pub use triggers::AreaCompleted;
 
 use crate::assets::terrain::TerrainAsset;
