@@ -244,5 +244,18 @@ Approved by the owner:
    hurt has just killed, so a dead bee could start a dive and become
    spiked again. The port ends the dead bee's frame.
 
+Pending the owner's approval (merged, because none changes single-player
+gameplay; each is easy to revert):
+
+2. **Firefly error paths** (`AddFireFly`, `FindFireFlyTarget`): where the
+   original stops the game, the port logs an error. A firefly outside the
+   Night level doesn't spawn; with no target item on the level, it lets go
+   of the player at once.
+3. **Firefly with several players**: each firefly chases the nearest
+   player and keeps to it; "one chaser at a time" stays global.
+4. **Firefly carry climb**: above the carry height the original halves a
+   fast rise once per frame; the port applies it per second at the
+   original's 60 fps (`0.5^(dt·60)`).
+
 Any others that come up during the ports are listed here for approval
 before they merge.
