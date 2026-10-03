@@ -1,4 +1,4 @@
-//! Visual effects: particle groups, ripples and splashes.
+//! Visual effects: particle groups, ripples and splashes, and shards.
 //!
 //! Port of the core of original/src/Items/Effects.c. The effects that
 //! belong to one enemy or item (fire, gas, sparks of a checkpoint, …) are
@@ -8,6 +8,7 @@ mod glow;
 mod particles;
 mod render;
 mod ripple;
+mod shards;
 
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
@@ -19,6 +20,7 @@ pub use particles::{
     ParticleGroups, ParticleKind, ParticleTexture, ParticleTouch, particle_hit,
 };
 pub use ripple::{Ripple, RippleMaker, make_ripple};
+pub use shards::{Explosion, MAX_SHARDS, Shard, ShardMode, explode_geometry};
 
 use crate::collision::CollisionBoxes;
 use crate::math::GameRandom;
@@ -31,7 +33,7 @@ pub struct EffectsPlugin;
 
 impl Plugin for EffectsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(glow::plugin)
+        app.add_plugins((glow::plugin, shards::plugin))
             .init_resource::<ParticleGroups>()
             .add_systems(Startup, render::load_particle_materials)
             .add_systems(OnExit(AppState::InGame), clear_particle_groups)
