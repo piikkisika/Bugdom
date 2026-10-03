@@ -243,10 +243,6 @@ Approved by the owner:
    original runs the rest of the frame's flying logic for a bee that a
    hurt has just killed, so a dead bee could start a dive and become
    spiked again. The port ends the dead bee's frame.
-
-Pending the owner's approval (merged, because none changes single-player
-gameplay; each is easy to revert):
-
 2. **Firefly error paths** (`AddFireFly`, `FindFireFlyTarget`): where the
    original stops the game, the port logs an error. A firefly outside the
    Night level doesn't spawn; with no target item on the level, it lets go
