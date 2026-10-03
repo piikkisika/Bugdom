@@ -9,6 +9,7 @@ use bevy::ecs::entity::EntityHashSet;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
+use super::buddy::Buddy;
 use super::{DetonatorsBlown, MaterialOverride, SpawnBuddy, SpawnTick};
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
@@ -310,6 +311,7 @@ struct NutCracker<'w, 's> {
     level: Res<'w, CurrentLevel>,
     ticks: MessageWriter<'w, SpawnTick>,
     buddies: MessageWriter<'w, SpawnBuddy>,
+    existing_buddies: Query<'w, 's, &'static Buddy>,
 }
 
 impl NutCracker<'_, '_> {
@@ -324,11 +326,14 @@ impl NutCracker<'_, '_> {
         shell.despawn();
     }
 
-    /// Port of `CreateNutContents`. The buddy bug isn't ported, so there is
-    /// never one already, and its nut always holds it rather than a green
-    /// clover.
+    /// Port of `CreateNutContents`. A player whose buddy still follows it
+    /// finds a green clover instead of a second buddy.
     fn create_contents(&mut self, nut: &Nut, at: Vec3, player: Entity) {
+        let has_buddy = self.existing_buddies.iter().any(|b| b.follows(player));
         match nut.contents {
+            Some(NutContents::Buddy) if has_buddy => {
+                self.make_powerup(NutContents::GreenClover, nut.param, at);
+            }
             Some(NutContents::Buddy) => {
                 self.buddies.write(SpawnBuddy {
                     player,
@@ -541,7 +546,7 @@ fn collect_powerups(
 /// Port of `IsPositionOutOfRange_Far` (original/src/Terrain/Terrain2.c),
 /// including its sign slip on z: there it narrows the window by `range`
 /// instead of widening it.
-fn is_out_of_range_far(window: &ItemWindow, position: Vec2, range: f32) -> bool {
+pub(super) fn is_out_of_range_far(window: &ItemWindow, position: Vec2, range: f32) -> bool {
     position.x < window.delete_min.x - range
         || position.x > window.delete_max.x + range
         || position.y < window.delete_min.y + range

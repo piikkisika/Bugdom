@@ -2,7 +2,8 @@
 //!
 //! Port of `AddCheckpoint`, `MoveCheckpoint`, `DoTrig_Checkpoint`,
 //! `AddExitLog` and `DoTrig_ExitLog` (original/src/Items/Triggers2.c), and
-//! `AddLawnDoor` (original/src/Items/Triggers.c).
+//! `AddLawnDoor` (original/src/Items/Triggers.c), which makes the doors of
+//! both the Lawn and the Night levels.
 
 use std::f32::consts::{FRAC_PI_2, TAU};
 
@@ -11,7 +12,7 @@ use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
 use super::kind as item;
-use super::scenery::StaticObject;
+use super::scenery::{StaticObject, on_level};
 use super::{ItemSpawn, ItemSystems, RegisterItemKind};
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
@@ -56,8 +57,10 @@ const STRAW_MODEL: ModelRef = ModelRef::new(ModelFile::Global1, 7);
 const DROPLET_MODEL: ModelRef = ModelRef::new(ModelFile::Global1, 8);
 /// `GLOBAL2_MObjType_ExitLog`
 const EXIT_LOG_MODEL: ModelRef = ModelRef::new(ModelFile::Global2, 1);
-/// `LAWN1_MObjType_Door_Green`; the other colours follow.
+/// `LAWN1_MObjType_Door_Green` and `NIGHT_MObjType_Door_Green`; the other
+/// colours follow.
 const LAWN_DOOR_MODEL: usize = 1;
+const NIGHT_DOOR_MODEL: usize = 13;
 
 const CHECKPOINT_SCALE: f32 = 1.5;
 /// Where the droplet hangs from the straw, before scaling.
@@ -288,8 +291,19 @@ fn complete_area(
     }
 }
 
-/// Port of `AddLawnDoor` for the Lawn. `params[0]` is the key that opens it
-/// and `params[1]` which way it faces, in quarter turns.
+/// The first door model of a level type (`AddLawnDoor`'s model choice), or
+/// `None` where there are no doors.
+fn door_model_base(level_type: LevelType) -> Option<usize> {
+    match level_type {
+        LevelType::Lawn => Some(LAWN_DOOR_MODEL),
+        LevelType::Night => Some(NIGHT_DOOR_MODEL),
+        _ => None,
+    }
+}
+
+/// Port of `AddLawnDoor`, for the Lawn and Night levels. `params[0]` is the
+/// key that opens it and `params[1]` which way it faces, in quarter turns.
+/// On any other level it is skipped with a warning ([`on_level`]).
 fn add_lawn_door(
     In(spawn): In<ItemSpawn>,
     mut commands: Commands,
@@ -297,13 +311,12 @@ fn add_lawn_door(
     map: Res<TerrainMap>,
     level: Res<CurrentLevel>,
 ) -> bool {
-    if level.def().level_type != LevelType::Lawn {
-        warn!(
-            "Doors on {:?} levels are not ported yet",
-            level.def().level_type
-        );
+    if !on_level(&level, &[LevelType::Lawn, LevelType::Night], "Door") {
         return false;
     }
+    let Some(model_base) = door_model_base(level.def().level_type) else {
+        return false;
+    };
     let key = spawn.params[0];
     let mut aim = spawn.params[1];
     if spawn.flags & ITEM_FLAG_USER1 != 0 {
@@ -319,7 +332,7 @@ fn add_lawn_door(
     };
     let door = StaticObject {
         y: map.floor_height(spawn.position.x, spawn.position.y),
-        model: ModelRef::new(ModelFile::Level1, LAWN_DOOR_MODEL + usize::from(key)),
+        model: ModelRef::new(ModelFile::Level1, model_base + usize::from(key)),
         shading: Shading::Lit,
         yaw: f32::from(aim) * FRAC_PI_2,
         scale: LAWN_DOOR_SCALE,
@@ -432,4 +445,18 @@ fn add_exit_log(
         DespawnOnExit(AppState::InGame),
     ));
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn doors_use_their_level_s_models() {
+        // `LAWN1_MObjType_Door_Green` and `NIGHT_MObjType_Door_Green`, each
+        // five before the matching key.
+        assert_eq!(door_model_base(LevelType::Lawn), Some(1));
+        assert_eq!(door_model_base(LevelType::Night), Some(13));
+        assert_eq!(door_model_base(LevelType::Hive), None);
+    }
 }
