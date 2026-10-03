@@ -30,6 +30,7 @@ mod anim {
     pub const DEATH: usize = 13;
     pub const BLOOD_SUCK: usize = 14;
     pub const WEBBED: usize = 15;
+    pub const ROPE_SWING: usize = 16;
     pub const CARRIED: usize = 17;
 }
 
@@ -79,6 +80,7 @@ fn animation_for(state: BugState) -> usize {
         BugState::Carried => anim::CARRIED,
         BugState::RideWaterBug => anim::RIDE_WATER_BUG,
         BugState::RideDragonFly => anim::RIDE_DRAGONFLY,
+        BugState::RopeSwing => anim::ROPE_SWING,
     }
 }
 
@@ -103,6 +105,9 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
         // `DoTrig_WaterBug` and `DoTrig_DragonFly`.
         (_, BugState::RideWaterBug) => Some(7.0),
         (_, BugState::RideDragonFly) => Some(8.0),
+        // `PlayerGrabRootSwing` and `PlayerLeaveRootSwing`.
+        (_, BugState::RopeSwing) => Some(10.0),
+        (Some(BugState::RopeSwing), BugState::Fall) => Some(9.0),
         (Some(BugState::BloodSuck), BugState::Stand) => Some(7.0),
         (Some(BugState::Webbed), BugState::Stand) => Some(3.0),
         (Some(BugState::Carried), BugState::Fall) => Some(5.0),

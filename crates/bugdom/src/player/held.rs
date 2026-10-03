@@ -252,25 +252,29 @@ pub(super) fn split_eaten_matrix(model: Affine3A, root_rotation: Quat) -> (Vec3,
 }
 
 /// The model's transform relative to a root at `root_translation`.
-fn model_relative_to(model: Affine3A, root_rotation: Quat, root_translation: Vec3) -> Transform {
+pub(super) fn model_relative_to(
+    model: Affine3A,
+    root_rotation: Quat,
+    root_translation: Vec3,
+) -> Transform {
     let root = Affine3A::from_rotation_translation(root_rotation, root_translation);
     Transform::from_matrix(Mat4::from(root.inverse() * model))
 }
 
 /// The world matrix of an object's `joint` (`FindJointFullMatrix`) and
-/// the object's scale. An enemy's skeleton and scale are on its model
-/// child ([`EnemyModel`]), under a root with a unit scale; other objects
-/// carry them on their own entity.
+/// the object's scale. Where the skeleton and scale are on a model child
+/// (an enemy's [`EnemyModel`], a root swing's model), `model` names it and
+/// the root has a unit scale; otherwise they are on the object itself.
 pub(super) fn joint_matrix(
     rigs: &Query<(&Transform, Option<&SkeletonRig>), Without<Player>>,
     object: Entity,
-    model: Option<&EnemyModel>,
+    model: Option<Entity>,
     joint: usize,
 ) -> Option<(Affine3A, f32)> {
     let (root, root_rig) = rigs.get(object).ok()?;
     let (base, scale, rig) = match model {
         Some(model) => {
-            let (model_transform, rig) = rigs.get(model.0).ok()?;
+            let (model_transform, rig) = rigs.get(model).ok()?;
             (
                 root.compute_affine() * model_transform.compute_affine(),
                 model_transform.scale.x,
@@ -308,9 +312,12 @@ pub(super) fn follow_eaters(
             });
             continue;
         };
-        let Some((joint, scale)) =
-            joint_matrix(&transforms.p0(), eaten.enemy, eater_model, eaten.joint)
-        else {
+        let Some((joint, scale)) = joint_matrix(
+            &transforms.p0(),
+            eaten.enemy,
+            eater_model.map(|m| m.0),
+            eaten.joint,
+        ) else {
             continue;
         };
         let matrix = eaten_model_matrix(joint, scale, eaten.mouth_offset);

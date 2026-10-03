@@ -177,9 +177,12 @@ pub(super) fn seat_riders(
             *state = BugState::Fall;
             continue;
         };
-        let Some((joint, scale)) =
-            joint_matrix(&transforms.p0(), riding.ride, ride_model, riding.joint)
-        else {
+        let Some((joint, scale)) = joint_matrix(
+            &transforms.p0(),
+            riding.ride,
+            ride_model.map(|m| m.0),
+            riding.joint,
+        ) else {
             continue;
         };
         let matrix = seat_model_matrix(joint, scale, riding.seat);

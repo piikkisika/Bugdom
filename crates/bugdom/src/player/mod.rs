@@ -16,6 +16,7 @@ mod inventory;
 mod kick;
 mod movement;
 mod ride;
+mod swing;
 mod tuning;
 
 use std::f32::consts::TAU;
@@ -45,6 +46,7 @@ pub use movement::InViscousTrap;
 pub use ride::{
     LeftRide, MountRide, RideKind, Riding, dragonfly_rider_mask, hops_off, seat_model_matrix,
 };
+pub use swing::{PrevRope, SwingingOn};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 
 use crate::assets::terrain::TerrainAsset;
@@ -101,6 +103,7 @@ impl Plugin for PlayerPlugin {
                 (
                     health::count_down_invincibility,
                     ride::seat_riders,
+                    swing::swing_on_roots,
                     bug::move_bug,
                     ball::move_ball,
                     health::count_down_shield,
@@ -142,7 +145,12 @@ impl Plugin for PlayerPlugin {
             )
             .add_systems(
                 FixedUpdate,
-                (held::apply_holds, ride::mount_rides, ride::leave_rides)
+                (
+                    held::apply_holds,
+                    ride::mount_rides,
+                    ride::leave_rides,
+                    swing::grab_root_swings,
+                )
                     .chain()
                     .in_set(PlayerSystems::Hold),
             )
@@ -469,6 +477,8 @@ fn respawn_dead_players(
                 Torched,
                 crate::liquids::Underwater,
                 InViscousTrap,
+                SwingingOn,
+                PrevRope,
                 EatenBy,
                 CarriedBy,
             )>()
@@ -494,7 +504,8 @@ fn pose_player_model(
         // Held in a mouth or seated on a ride, the model has been placed
         // already.
         if *form == PlayerForm::Bug
-            && (*state == BugState::BeingEaten || RideKind::of_state(*state).is_some())
+            && (matches!(*state, BugState::BeingEaten | BugState::RopeSwing)
+                || RideKind::of_state(*state).is_some())
         {
             continue;
         }

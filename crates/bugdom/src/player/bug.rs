@@ -19,6 +19,7 @@ use super::held::{CARRIED_DROP, CarriedBy, EatenBy, player_layers};
 use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, PELVIS_JOINT, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
 use super::ride::{dragonfly_rider_mask, hops_off};
+use super::swing::{PrevRope, SwingingOn, rope_leave_velocity};
 use super::{BugTuning, Dying, Player, PlayerForm, PlayerModel, PlayerTuning};
 use crate::input::Action;
 use crate::liquids::LiquidKind;
@@ -66,6 +67,8 @@ pub enum BugState {
     /// Riding the dragonfly ([`Riding`](super::ride::Riding)), until it hops off or an enemy
     /// throws it off.
     RideDragonFly,
+    /// Swinging on an Ant Hill root ([`SwingingOn`]), until it lets go.
+    RopeSwing,
 }
 
 /// One tick of the bug's movement.
@@ -106,6 +109,7 @@ pub fn move_bug(
             Has<Torched>,
             Option<&CarriedBy>,
             Has<EatenBy>,
+            (Has<SwingingOn>, Has<PrevRope>),
         ),
         With<Player>,
     >,
@@ -120,7 +124,17 @@ pub fn move_bug(
         Without<Player>,
     >,
 ) {
-    for (mut player, model, mut ripple, mut fire, torched, carried_by, eaten) in &mut players {
+    for (
+        mut player,
+        model,
+        mut ripple,
+        mut fire,
+        torched,
+        carried_by,
+        eaten,
+        (swinging, prev_rope),
+    ) in &mut players
+    {
         if *player.form != PlayerForm::Bug {
             continue;
         }
@@ -192,6 +206,14 @@ pub fn move_bug(
         }
         if eaten && state != BugState::BeingEaten {
             commands.entity(player.entity).remove::<EatenBy>();
+        }
+        if swinging && state != BugState::RopeSwing {
+            commands.entity(player.entity).remove::<SwingingOn>();
+        }
+        // Standing or walking, it may grab the root it last let go of again
+        // (`gPrevRope = nil` in `MovePlayerBug_Stand` and `_Walk`).
+        if prev_rope && matches!(state, BugState::Stand | BugState::Walk) {
+            commands.entity(player.entity).remove::<PrevRope>();
         }
         if drowned && !player.dying {
             commands.entity(player.entity).insert(Dying {
@@ -291,6 +313,7 @@ impl Bug<'_> {
             BugState::Carried => self.carried(),
             BugState::RideWaterBug => self.ride_water_bug(),
             BugState::RideDragonFly => self.ride_dragonfly(),
+            BugState::RopeSwing => self.rope_swing(),
         }
         // A held or riding bug doesn't turn (`UpdatePlayer_Bug` isn't
         // called).
@@ -301,6 +324,7 @@ impl Bug<'_> {
                     | BugState::Carried
                     | BugState::RideWaterBug
                     | BugState::RideDragonFly
+                    | BugState::RopeSwing
             )
         {
             self.update();
@@ -558,6 +582,19 @@ impl Bug<'_> {
             BugState::Jump
         };
         self.jump();
+    }
+
+    /// Port of `MovePlayerBug_RopeSwing`: the root has swung and turned the
+    /// bug ([`swing_on_roots`](super::swing::swing_on_roots)); the jump
+    /// button lets go (`PlayerLeaveRootSwing`) and the bug moves as falling
+    /// at once.
+    fn rope_swing(&mut self) {
+        self.motion.steering = Vec2::ZERO;
+        if hops_off(self.motion.input) {
+            self.motion.velocity = rope_leave_velocity(self.motion.velocity);
+            self.state = BugState::Fall;
+            self.fall();
+        }
     }
 
     /// Sinks slowly; the bug starts again once the kill delay is over.
@@ -1316,5 +1353,32 @@ mod tests {
         bug.tick();
         assert_eq!(bug.state, BugState::Jump);
         assert_eq!(bug.motion.velocity.xz(), Vec2::ZERO);
+    }
+
+    #[test]
+    fn a_swinging_bug_hangs_on_until_it_jumps_off_flying() {
+        let bench = Bench::lawn();
+        let idle = ControlInput::for_tests(&[Action::Forward], &[]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &idle, &animator, BugState::RopeSwing);
+        bug.motion.coord.y += 600.0;
+        bug.motion.velocity = Vec3::new(0.0, 0.0, -500.0);
+        let at = bug.motion.coord;
+        bug.tick();
+        // The root moves it; the bug itself does nothing.
+        assert_eq!(bug.state, BugState::RopeSwing);
+        assert_eq!(bug.motion.coord, at);
+        assert_eq!(bug.motion.steering, Vec2::ZERO);
+
+        let jump = ControlInput::for_tests(&[], &[Action::Jump]);
+        bug.motion = bug.motion.next_tick(&jump);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Fall);
+        // Flung along its swing, then falling; the fall's move caps the
+        // fling at the bug's top speed at once, as in the original.
+        let max_speed = bench.tuning.form(PlayerForm::Bug).max_speed;
+        assert!((bug.motion.velocity.z + max_speed).abs() < 1.0);
+        assert_eq!(bug.motion.velocity.x, 0.0);
+        assert!(bug.motion.coord.z < at.z);
     }
 }

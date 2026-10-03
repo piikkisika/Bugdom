@@ -5,11 +5,8 @@
 //! `MoveRootSwing` and `SetRootAnimTimeIndex`
 //! (original/src/Items/Items2.c).
 //!
-//! The player's side, swinging on the root (`PlayerGrabRootSwing`,
-//! `MovePlayerBug_RopeSwing`, `PlayerLeaveRootSwing` in
-//! original/src/Player/Player_Bug.c), needs a rope-swing state in the
-//! bug's controller that doesn't exist yet. Until it does, the root sends
-//! [`GrabRootSwing`] and nothing answers it.
+//! The root sends [`GrabRootSwing`]; the player's side, swinging on the
+//! root, is in `player/swing.rs`.
 
 use std::f32::consts::TAU;
 
@@ -101,24 +98,8 @@ pub struct RootSwing {
 /// A jumping or falling bug touched a root swing's joint and grabs it.
 ///
 /// Port of the call to `PlayerGrabRootSwing` in `MoveRootSwing`
-/// (original/src/Items/Items2.c). Nothing answers it yet: the bug's
-/// controller needs a rope-swing state for it. What the player's side must
-/// do (original/src/Player/Player_Bug.c):
-///
-/// - Ignore the grab when `root` is the root the bug last let go of
-///   (`gPrevRope`), which it forgets once it stands or walks.
-/// - On a grab: remember `root` and `joint` (`gCurrentRope`,
-///   `gCurrentRopeJoint`), morph to `PLAYER_ANIM_ROPESWING` (16) at rate
-///   10, and add the root's yaw to the bug's.
-/// - Each tick (`MovePlayerBug_RopeSwing`): no steering; the jump key lets
-///   go (`PlayerLeaveRootSwing`: the velocity's direction times 3000 in x
-///   and z, 200 up, morph to falling at 9, then move as falling); the
-///   turn input turns the bug; the bug's model is placed at
-///   `(0, -100, 25)` in the joint's space, turned by its yaw, at the
-///   bug's scale over the root's; its position is that point, and its
-///   velocity how far it moved this tick.
-/// - While falling just after letting go, it doesn't aim at boppable
-///   objects.
+/// (original/src/Items/Items2.c). The player answers it (`player/swing.rs`),
+/// ignoring the root it last let go of.
 #[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
 pub struct GrabRootSwing {
     pub player: Entity,
