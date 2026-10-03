@@ -19,7 +19,9 @@ use bevy::prelude::*;
 use crate::collision::{CollisionBox, CollisionBoxes};
 use crate::items::kind as item;
 use crate::items::scenery::on_level;
-use crate::items::{DespawnOutOfRange, ItemSpawn, ItemSystems, RegisterItemKind, TerrainItemSource};
+use crate::items::{
+    DespawnOutOfRange, ItemSpawn, ItemSystems, RegisterItemKind, TerrainItemSource,
+};
 use crate::level::{CurrentLevel, LevelType};
 use crate::player::{BugState, Dying, Player, PlayerForm, PlayerSystems};
 use crate::skeleton::{Skeleton, SkeletonAnimator, SkeletonRig, SkeletonSystems, SkeletonType};
@@ -157,8 +159,9 @@ fn add_root_swing(
     let root = commands
         .spawn((
             Name::new("Root swing"),
-            Transform::from_xyz(x, y, z)
-                .with_rotation(Quat::from_rotation_y(f32::from(spawn.params[0]) * ROOT_TURN_STEP)),
+            Transform::from_xyz(x, y, z).with_rotation(Quat::from_rotation_y(
+                f32::from(spawn.params[0]) * ROOT_TURN_STEP,
+            )),
             Visibility::default(),
             TerrainItemSource(spawn.index),
             DespawnOutOfRange,
@@ -244,8 +247,11 @@ fn grab_root_swings(
             **form == PlayerForm::Bug && matches!(state, BugState::Jump | BugState::Fall)
         })
         .map(|(entity, _, _, transform, boxes)| {
-            let world: Vec<CollisionBox> =
-                boxes.0.iter().map(|b| b.at(transform.translation)).collect();
+            let world: Vec<CollisionBox> = boxes
+                .0
+                .iter()
+                .map(|b| b.at(transform.translation))
+                .collect();
             (entity, world)
         })
         .collect();

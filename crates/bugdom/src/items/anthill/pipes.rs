@@ -230,7 +230,10 @@ mod tests {
     fn the_leak_turns_with_the_pipe() {
         let pipe = AntPipe::new(0, 0, Vec3::new(100.0, 10.0, 0.0), FRAC_PI_2, BENT_PIPE_LEAK);
         // A quarter turn takes +x to −z and +z to +x.
-        assert!(pipe.leak_point.abs_diff_eq(Vec3::new(145.0, 188.0, -45.0), 1e-3));
+        assert!(
+            pipe.leak_point
+                .abs_diff_eq(Vec3::new(145.0, 188.0, -45.0), 1e-3)
+        );
     }
 
     #[test]
@@ -268,6 +271,9 @@ mod tests {
         assert!(leaking.leaking);
         let group = leaking.drops.unwrap();
         let groups = world.resource::<ParticleGroups>();
-        assert_eq!(groups.get(group).unwrap().particles().len(), LEAK_DROPS_PER_BURST);
+        assert_eq!(
+            groups.get(group).unwrap().particles().len(),
+            LEAK_DROPS_PER_BURST
+        );
     }
 }

@@ -257,7 +257,10 @@ mod tests {
         let diagonal = FireWall::new([0, 1, 2, 0]);
         assert_eq!(diagonal.flame_count(), 6);
         assert_eq!(diagonal.flame_step(), Vec2::splat(2.0 * TILE_SIZE / 6.0));
-        assert_eq!(FireWall::new([0, 2, 1, 0]).flame_step(), Vec2::new(0.0, TILE_SIZE / 3.0));
+        assert_eq!(
+            FireWall::new([0, 2, 1, 0]).flame_step(),
+            Vec2::new(0.0, TILE_SIZE / 3.0)
+        );
     }
 
     #[test]

@@ -12,7 +12,9 @@ use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
 use super::{anthill_models, emit_burst};
-use crate::collision::{CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object};
+use crate::collision::{
+    CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
+};
 use crate::effects::{
     EffectsSystems, ParticleFlags, ParticleGroupDesc, ParticleGroupId, ParticleGroups,
     ParticleKind, ParticleTexture,

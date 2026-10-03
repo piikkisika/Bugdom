@@ -10,7 +10,9 @@ use avian3d::prelude::{CollisionLayers, LayerMask};
 use bevy::prelude::*;
 
 use super::anthill_models;
-use crate::collision::{CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object};
+use crate::collision::{
+    CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
+};
 use crate::items::kind as item;
 use crate::items::scenery::on_level;
 use crate::items::triggers::ITEM_FLAG_USER1;
@@ -34,8 +36,7 @@ pub(super) fn plugin(app: &mut App) {
         );
 }
 
-const VALVE_BOX_MODEL: ModelRef =
-    ModelRef::new(ModelFile::Level1, anthill_models::WATER_VALVE_BOX);
+const VALVE_BOX_MODEL: ModelRef = ModelRef::new(ModelFile::Level1, anthill_models::WATER_VALVE_BOX);
 const VALVE_HANDLE_MODEL: ModelRef =
     ModelRef::new(ModelFile::Level1, anthill_models::WATER_VALVE_HANDLE);
 const VALVE_SCALE: f32 = 0.25;
@@ -141,9 +142,10 @@ fn open_valves(
             continue;
         }
         valve.open = true;
-        commands.entity(hit.trigger).remove::<Trigger>().insert(
-            CollisionLayers::new(CollisionKind::Misc, LayerMask::NONE),
-        );
+        commands
+            .entity(hit.trigger)
+            .remove::<Trigger>()
+            .insert(CollisionLayers::new(CollisionKind::Misc, LayerMask::NONE));
         // The item comes back open if it streams out and in again.
         items.set_flags(source.0, ITEM_FLAG_USER1);
         match open.0.get_mut(usize::from(valve.id)) {
