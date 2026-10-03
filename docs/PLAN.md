@@ -189,7 +189,13 @@ also lists the approved differences from the original.
   - [x] checkpoint sparks (`DoTrig_Checkpoint`)
   - [x] the ball's nitro trail (`LeaveNitroTrail`)
   - [x] lava burning the drowned bug (`gTorchPlayer`)
-- **Milestone:** every level is playable from start to finish
+- [ ] Integration pass: play each level through, check the behaviour not yet
+  seen running (rides, root swings, shards, the mosquito's blood suck, the
+  king ant's fireballs, the queen bee's shadow) and fix the gaps. **Deferred**
+  until the full game runs with its menus and screens (Phase 4), so that the
+  levels are played as the game strings them together.
+- **Milestone:** every level is playable from start to finish (checked by the
+  integration pass)
 
 ### Phase 4: Screens and polish
 

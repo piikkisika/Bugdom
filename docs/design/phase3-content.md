@@ -25,7 +25,8 @@ the phase runs in three waves:
 quickly, and workers that hit the usage limit stopped mid-package. Once the
 packages already in flight are merged, the remaining packages and the
 integration are done in the main session, one at a time, without
-subagents or worktrees. §3 and §6 still describe how the fan-out worked.
+subagents or worktrees. The integration pass itself is deferred until the game runs
+with its menus and screens (Phase 4). §3 and §6 still describe how the fan-out worked.
 
 ## 2. Shared vocabulary **[review]**
 
