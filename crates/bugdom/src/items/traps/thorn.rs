@@ -14,8 +14,7 @@ use crate::collision::{CollisionBox, CollisionKind};
 use crate::combat::Damage;
 use crate::level::{CurrentLevel, LevelType};
 use crate::math::GameRandom;
-use crate::objects::ModelSpawner;
-use crate::objects::{ModelFile, ModelRef, Shading};
+use crate::objects::{ModelFile, ModelRef, ModelSpawner, Shading};
 use crate::terrain::TerrainMap;
 
 pub(super) fn plugin(app: &mut App) {

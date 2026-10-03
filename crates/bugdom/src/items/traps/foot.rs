@@ -15,15 +15,20 @@ use super::super::kind as item;
 use super::TrapModel;
 use crate::collision::{CollisionBox, CollisionBoxes, CollisionKind, SolidSides, solid_object};
 use crate::combat::Damage;
-use crate::math::{GameRandom, yaw_from_point_to_point};
+use crate::math::{GameRandom, yaw_from_point_to_point, yaw_of};
 use crate::physics::PreviousPosition;
 use crate::skeleton::{Skeleton, SkeletonAnimator, SkeletonType};
-use crate::splines::{OnSpline, RegisterSplineItemKind, SplineItemSpawn, SplineSystems, Splines};
+use crate::splines::{
+    OnSpline, RegisterSplineItemKind, SplineItemKinds, SplineItemSpawn, SplineSystems, Splines,
+};
 use crate::state::LevelAssets;
 use crate::terrain::TerrainMap;
 
 pub(super) fn plugin(app: &mut App) {
-    app.register_spline_item_kind(item::FOOT, prime_foot)
+    // The items plugin is built before the splines plugin, so make sure the
+    // table exists (`init_resource` keeps the one already there).
+    app.init_resource::<SplineItemKinds>()
+        .register_spline_item_kind(item::FOOT, prime_foot)
         .add_systems(FixedUpdate, move_feet.in_set(SplineSystems::Move));
 }
 
@@ -322,14 +327,11 @@ fn move_feet(
             continue;
         }
         if speed > FOOT_TURN_MIN_SPEED {
-            let yaw = yaw_from_point_to_point(
-                crate::math::yaw_of(model_transform.rotation),
-                previous.xz(),
-                position,
-            );
+            let yaw =
+                yaw_from_point_to_point(yaw_of(model_transform.rotation), previous.xz(), position);
             model_transform.rotation = Quat::from_rotation_y(yaw);
         }
-        boxes.0 = foot_boxes(crate::math::yaw_of(model_transform.rotation));
+        boxes.0 = foot_boxes(yaw_of(model_transform.rotation));
         *collider = boxes.collider();
     }
 }
