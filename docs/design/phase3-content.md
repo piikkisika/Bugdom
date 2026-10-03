@@ -295,5 +295,14 @@ Pending the owner's approval (merged; easy to revert):
     original carries on with the old state, which could set the dying
     king walking (and shooting) again with only `Misc` collision.
 
+15. **Hive door opens in place** (`MakeOpenHiveDoor`): the original
+    deletes the closed door, freeing its map item, and makes an open door
+    tied to no item. The port swaps the model and boxes on the same
+    entity, which keeps the item and avoids a second open door if the
+    item's row is scanned again before the old door leaves range.
+16. **Floor spike timing** (`MoveFloorSpike`): the spike moves before the
+    player's collision rather than after it, so a standing player is hit;
+    its nearness test therefore sees player positions one tick old.
+
 Any others that come up during the ports are listed here for approval
 before they merge.

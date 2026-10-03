@@ -26,17 +26,12 @@ use crate::level::{CurrentLevel, LevelType};
 use crate::objects::{ModelFile, ModelRef, ModelSpawner, Shading};
 use crate::physics::{PreviousPosition, Velocity};
 use crate::player::PlayerSystems;
-use crate::splines::{
-    OnSpline, RegisterSplineItemKind, SplineItemKinds, SplineItemSpawn, SplineSystems, Splines,
-};
+use crate::splines::{OnSpline, RegisterSplineItemKind, SplineItemSpawn, SplineSystems, Splines};
 use crate::state::AppState;
 use crate::terrain::TerrainMap;
 
 pub(super) fn plugin(app: &mut App) {
-    // The items are built before the splines, so the spline item table
-    // may not exist yet; `SplinesPlugin` keeps one that is already there.
-    app.init_resource::<SplineItemKinds>()
-        .register_item_kind(item::HONEYCOMB_PLATFORM, add_honeycomb_platform)
+    app.register_item_kind(item::HONEYCOMB_PLATFORM, add_honeycomb_platform)
         .register_spline_item_kind(item::HONEYCOMB_PLATFORM, prime_honeycomb_platform)
         .add_systems(
             FixedUpdate,
