@@ -21,6 +21,12 @@ the phase runs in three waves:
 3. **Integration (main session).** Merge, run the full checks, play each
    level through with the debug camera and screenshots, fix the gaps.
 
+**Change of method (2026-10-03):** the fan-out drained the usage budget
+quickly, and workers that hit the usage limit stopped mid-package. Once the
+packages already in flight are merged, the remaining packages and the
+integration are done in the main session, one at a time, without
+subagents or worktrees. §3 and §6 still describe how the fan-out worked.
+
 ## 2. Shared vocabulary **[review]**
 
 ### 2.1 Player damage (`player/health.rs`)

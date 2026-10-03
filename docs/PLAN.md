@@ -132,7 +132,14 @@ The original game is not built as part of this project.
 - [x] Spawning terrain items, collision categories, triggers framework
 - **Milestone:** the player can walk, jump, roll and swim in the Lawn level, and it feels the same as the reference. Design: [`docs/design/phase2-engine-core.md`](design/phase2-engine-core.md)
 
-### Phase 3: Content (parallel subagents in separate git worktrees)
+### Phase 3: Content (main session)
+
+Most of the content packages were ported by parallel subagents in separate
+git worktrees. That drained the usage budget quickly, and workers that hit
+the usage limit stopped mid-package, so once the packages in flight
+(dragonfly, buddy bug and night doors) are merged, **all further work runs
+in the main session, one package at a time, without subagents**. This also
+holds for Phase 4.
 
 Design: [`docs/design/phase3-content.md`](design/phase3-content.md), which
 also lists the approved differences from the original.
@@ -145,7 +152,7 @@ also lists the approved differences from the original.
   - [x] Enemy base: counts, spawning (skeletons and plain models), collision with kill routines, hurt and kill messages, culling, nearest player
   - [x] The kick, run before the player's move as in the original
   - [x] Held-player states (`HoldPlayer`/`ReleasePlayer`): being eaten, carried, blood suck, webbed
-- [ ] 18 enemies (`Enemies/*.c`), each as its own plugin (every kind has its file in `enemies/`, empty until ported)
+- [x] 18 enemies (`Enemies/*.c`), each as its own plugin (every kind has its file in `enemies/`, empty until ported)
   - [x] Ant (with spears, rocks and the ghost ant)
   - [x] Boxer fly
   - [x] Caterpillar and slug (shared crawling joints)
@@ -155,28 +162,28 @@ also lists the approved differences from the original.
   - [x] Skippy
   - [x] Tick (released by nuts)
   - [x] Worker bee (with its stinger)
-  - [ ] Fire ant
-  - [ ] Firefly (carries the player: `Hold::Carried`)
-  - [ ] King ant (boss; add `BossHealthBar`)
-  - [ ] Mosquito (blood suck: `Hold::BloodSuck`). Note: when `KillMosquito`
+  - [x] Fire ant
+  - [x] Firefly (carries the player: `Hold::Carried`)
+  - [x] King ant (boss; add `BossHealthBar`)
+  - [x] Mosquito (blood suck: `Hold::BloodSuck`). Note: when `KillMosquito`
     kills a mosquito that is sucking, the original stands the bug up whatever
     state it is in at that moment (if it is the bug, not the ball);
     `ReleasePlayer` today only stands up a bug still in `BloodSuck`, so the
     mosquito needs to do this itself.
-  - [ ] Queen bee (boss; add `BossHealthBar`; spawns larvae with `make_larva_enemy`)
-  - [ ] Roach (gas particles)
-  - [ ] Spider (web bullet and sphere: `Hold::Webbed`)
+  - [x] Queen bee (boss; add `BossHealthBar`; spawns larvae with `make_larva_enemy`)
+  - [x] Roach (gas particles)
+  - [x] Spider (web bullet and sphere: `Hold::Webbed`)
 - [ ] Items, traps, triggers, rides, spline objects (each package has its file in `items/`, empty until ported)
   - [x] Scenery for every level type (rocks, grass, pond plants, dock, trees, wood posts, faucet, honey tubes)
   - [x] Pickups: nuts and their contents, powerups, the ladybug cage, opening the lawn door
   - [ ] Buddy bug: 14 nuts on the Lawn alone hold it (`SpawnBuddy` is sent, nothing answers it yet)
   - [ ] Night doors (`add_lawn_door` still only spawns Lawn doors)
-  - [ ] Hive: honeycomb platform, firecracker, detonator (sets `DetonatorsBlown`), hive door, floor spike, shockwave
-  - [ ] Ant Hill: water valve, fire wall, ant pipes, king water pipe, root swing
-  - [ ] Traps: foot (spline), thorn bush, stump and its hive, rolling boulder
+  - [x] Hive: honeycomb platform, firecracker, detonator (sets `DetonatorsBlown`), hive door, floor spike, shockwave
+  - [x] Ant Hill: water valve, fire wall, ant pipes, king water pipe, root swing (and the bug swinging on it)
+  - [x] Traps: foot (spline), thorn bush, stump and its hive, rolling boulder
   - [ ] Dragonfly ride and the bat (the bat eats the player with `Hold::Eaten { follow: true }`; the hive gets `BossHealthBar` on Dragonfly Attack)
   - [ ] Water bug ride
-  - [ ] Shards (`QD3D_ExplodeGeometry`): nut shells, the cage, ticks and rocks just vanish for now
+  - [ ] Shards (`QD3D_ExplodeGeometry`): done for the cage, ticks, ant rocks, web spheres and firecrackers; the nut shells still just vanish
 - [x] Effects and particles (`Items/Effects.c`): the particle groups, ripples and splashes, then each effect:
   - [x] water splashes (falling into water, jumping out) and swim ripples (`Player_Control.c`, `Player_Bug.c`)
   - [x] checkpoint sparks (`DoTrig_Checkpoint`)
