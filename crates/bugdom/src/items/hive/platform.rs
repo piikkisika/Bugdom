@@ -6,9 +6,9 @@
 //! `PrimeHoneycombPlatform` and `MoveHoneycombPlatformOnSpline`
 //! (original/src/Items/Items2.c).
 //!
-//! The spline platforms are moving platforms (`CTYPE_MPLATFORM`), but the
-//! player's controller doesn't ride moving platforms yet (`MPlatform`), so
-//! a player standing on one is not carried along.
+//! The spline platforms are moving platforms (`CTYPE_MPLATFORM`): the
+//! player's controller carries a player standing on one by its
+//! [`Velocity`] (`MPlatform->Delta`).
 
 use avian3d::prelude::{CollisionLayers, LayerMask, TransformInterpolation};
 use bevy::prelude::*;
@@ -151,7 +151,14 @@ fn platform_shape(params: [u8; 4]) -> (f32, CollisionBox) {
     } else {
         PLATFORM_SCALE
     };
-    let shape = CollisionBox::new(65.0 * s, -300.0 * s, -200.0 * s, 200.0 * s, 200.0 * s, -200.0 * s);
+    let shape = CollisionBox::new(
+        65.0 * s,
+        -300.0 * s,
+        -200.0 * s,
+        200.0 * s,
+        200.0 * s,
+        -200.0 * s,
+    );
     (s, shape)
 }
 
@@ -241,7 +248,10 @@ fn add_honeycomb_platform(
     models.spawn(
         &mut commands,
         platform,
-        ModelRef::new(ModelFile::Level1, model::BRICK_PLATFORM + usize::from(metal)),
+        ModelRef::new(
+            ModelFile::Level1,
+            model::BRICK_PLATFORM + usize::from(metal),
+        ),
         Shading::Lit,
         Transform::from_scale(Vec3::splat(scale)),
     );
@@ -417,7 +427,10 @@ mod tests {
         let mut platform = brick(false);
         platform.state = PlatformState::Normal;
         let (mut y, mut v) = (-550.0, 0.0);
-        assert_eq!(platform.step(&mut y, &mut v, -800.0, 0.1), PlatformStep::Moved);
+        assert_eq!(
+            platform.step(&mut y, &mut v, -800.0, 0.1),
+            PlatformStep::Moved
+        );
         assert_eq!(y, -550.0);
     }
 
@@ -426,7 +439,10 @@ mod tests {
         let mut platform = brick(false);
         let (mut y, mut v) = (-550.0, 0.0);
         let floor = -600.0;
-        assert_eq!(platform.step(&mut y, &mut v, floor, 1.0), PlatformStep::Moved);
+        assert_eq!(
+            platform.step(&mut y, &mut v, floor, 1.0),
+            PlatformStep::Moved
+        );
         assert_eq!(v, -120.0);
         assert_eq!(y, -670.0);
         let mut steps = 0;
