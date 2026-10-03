@@ -19,12 +19,11 @@ use avian3d::prelude::TransformInterpolation;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
-use crate::effects::{Explosion, ShardMode, explode_geometry};
-
 use super::SPIDER_SCALE;
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
 };
+use crate::effects::{Explosion, ShardMode, explode_geometry};
 use crate::items::DespawnOutOfRange;
 use crate::objects::{ModelRef, ModelSpawner, ObjectMaterial, Shading};
 use crate::physics::{PreviousPosition, Velocity};

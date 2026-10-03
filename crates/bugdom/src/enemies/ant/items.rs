@@ -15,11 +15,10 @@ use avian3d::prelude::{CollisionLayers, LayerMask, TransformInterpolation};
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 
-use crate::effects::{Explosion, ShardMode, explode_geometry};
-
 use super::AntBrain;
 use crate::collision::{CollisionBox, CollisionKind, SolidSides, solid_object};
 use crate::combat::Damage;
+use crate::effects::{Explosion, ShardMode, explode_geometry};
 use crate::enemies::EnemyModel;
 use crate::items::DespawnOutOfRange;
 use crate::math::quick_distance;

@@ -9,13 +9,12 @@ use avian3d::prelude::TransformInterpolation;
 use bevy::ecs::entity::EntityHashSet;
 use bevy::prelude::*;
 
-use crate::effects::{Explosion, ShardMode, explode_geometry};
-
 use super::MaterialOverride;
 use crate::assets::skeleton::SkeletonAsset;
 use crate::collision::{
     CollisionBox, CollisionKind, SolidSides, Trigger, TriggerHit, solid_object,
 };
+use crate::effects::{Explosion, ShardMode, explode_geometry};
 use crate::enemies::EnemyCulling;
 use crate::items::kind as item;
 use crate::items::triggers::ChainedTo;

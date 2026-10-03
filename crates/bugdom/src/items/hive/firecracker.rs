@@ -9,16 +9,14 @@
 use avian3d::prelude::LayerMask;
 use bevy::prelude::*;
 
-use crate::effects::{Explosion, ShardMode, explode_geometry};
-
 use super::model;
 use crate::collision::{
     CollisionBox, CollisionBoxes, CollisionKind, CollisionSystems, SolidSides, solid_object,
 };
 use crate::combat::Damage;
 use crate::effects::{
-    EffectsSystems, FULL_ALPHA, ParticleFlags, ParticleGroupDesc, ParticleGroups, ParticleKind,
-    ParticleTexture, particle_hit,
+    EffectsSystems, Explosion, FULL_ALPHA, ParticleFlags, ParticleGroupDesc, ParticleGroups,
+    ParticleKind, ParticleTexture, ShardMode, explode_geometry, particle_hit,
 };
 use crate::items::kind as item;
 use crate::items::pickups::DetonatorsBlown;

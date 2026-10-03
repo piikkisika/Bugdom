@@ -6,8 +6,8 @@
 //! original/src/Items/Triggers2.c and the buddy bug of
 //! original/src/Player/MyGuy.c.
 //!
-//! The cage bursts into shards (`QD3D_ExplodeGeometry`); the nut's shell
-//! doesn't yet, it just vanishes.
+//! The cage and the nuts' shells burst into shards
+//! (`QD3D_ExplodeGeometry`).
 
 mod buddy;
 mod door;

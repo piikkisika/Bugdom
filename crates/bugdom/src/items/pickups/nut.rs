@@ -16,8 +16,8 @@ use crate::collision::{
 };
 use crate::combat::Health;
 use crate::effects::{
-    EffectsSystems, FULL_ALPHA, ParticleFlags, ParticleGroupDesc, ParticleGroupId, ParticleGroups,
-    ParticleKind, ParticleTexture,
+    EffectsSystems, Explosion, FULL_ALPHA, ParticleFlags, ParticleGroupDesc, ParticleGroupId,
+    ParticleGroups, ParticleKind, ParticleTexture, ShardMode, explode_geometry,
 };
 use crate::items::kind as item;
 use crate::items::{
@@ -296,12 +296,22 @@ fn blow_up_nuts(
     }
     for (entity, nut) in &nuts {
         if nut.detonator.is_some_and(|id| blown.is_blown(id)) {
+            commands.queue(explode_geometry(entity, SHELL_SHARDS));
             let mut nut = commands.entity(entity);
             forget_terrain_item(&mut nut);
             nut.despawn();
         }
     }
 }
+
+/// `QD3D_ExplodeGeometry(theNode, 500, 0, 1, .4)` on a cracked or blown
+/// nut's shell (`DoTrig_Nut`, `KickNut`, `MoveNut`).
+const SHELL_SHARDS: Explosion = Explosion {
+    force: 500.0,
+    mode: ShardMode::NONE,
+    density: 1,
+    decay: 0.4,
+};
 
 /// What cracking a nut needs.
 #[derive(SystemParam)]
@@ -319,6 +329,7 @@ impl NutCracker<'_, '_> {
     /// regenerates. Port of the end of `DoTrig_Nut` and `KickNut`.
     fn crack(&mut self, entity: Entity, nut: &Nut, at: Vec3, player: Entity) {
         self.create_contents(nut, at, player);
+        self.commands.queue(explode_geometry(entity, SHELL_SHARDS));
         let mut shell = self.commands.entity(entity);
         if !nut.regenerate {
             forget_terrain_item(&mut shell);
