@@ -41,6 +41,7 @@ pub struct ItemsPlugin;
 impl Plugin for ItemsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<ItemKinds>()
+            .add_message::<RattleHive>()
             .add_observer(release_item)
             .add_systems(
                 OnEnter(AppState::InGame),
@@ -72,6 +73,21 @@ impl Plugin for ItemsPlugin {
                 triggers::plugin,
             ));
     }
+}
+
+/// The stump's hive (`gHiveObj`, `FOREST_MObjType_Hive`), which the
+/// dragonfly's fireballs can rattle.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Hive;
+
+/// A fireball hit this [`Hive`]: it wobbles and lets out bees, or burns once
+/// its health is gone. Sent by the dragonfly ride, answered by the stump trap.
+///
+/// Port of the call to `RattleHive` (original/src/Items/Items.c) in
+/// `MoveFireball` (original/src/Ride/DragonFly.c).
+#[derive(Message, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RattleHive {
+    pub hive: Entity,
 }
 
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]

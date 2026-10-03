@@ -5,7 +5,7 @@
 //! Port of original/src/Player/Player_Control.c and of
 //! `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
 
-use avian3d::prelude::Collider;
+use avian3d::prelude::{Collider, LayerMask};
 use bevy::ecs::entity::EntityHashSet;
 use bevy::ecs::query::QueryData;
 use bevy::ecs::system::SystemParam;
@@ -457,6 +457,18 @@ impl Motion<'_> {
     /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
     /// Platforms and viscous objects arrive with those features.
     fn collide_with_objects(&mut self, dt: f32) {
+        let mask = if self.killed {
+            CollisionKind::Misc.into()
+        } else {
+            player_collision_mask()
+        };
+        self.collide_with(mask, dt);
+    }
+
+    /// [`Self::collide_with_objects`] against only the given kinds, such as
+    /// the enemies a bug on the dragonfly still runs into. Returns how many
+    /// objects it hit (`gNumCollisions`).
+    pub fn collide_with(&mut self, mask: LayerMask, dt: f32) -> usize {
         let mover = BoxMover {
             entity: self.entity,
             is_player: true,
@@ -468,11 +480,7 @@ impl Motion<'_> {
             &mover,
             &mut self.coord,
             &mut self.velocity,
-            if self.killed {
-                CollisionKind::Misc.into()
-            } else {
-                player_collision_mask()
-            },
+            mask,
             self.candidates,
             dt,
             &mut self.spent,
@@ -548,6 +556,7 @@ impl Motion<'_> {
                 self.triggered.push(trigger);
             }
         }
+        result.hits.len()
     }
 
     /// A spiked enemy hurts the player; the ball runs into the enemy.

@@ -15,6 +15,7 @@ mod held;
 mod inventory;
 mod kick;
 mod movement;
+mod ride;
 mod tuning;
 
 use std::f32::consts::TAU;
@@ -40,6 +41,9 @@ pub use held::{
     player_layers,
 };
 pub use inventory::{DoorKey, HandItem, Inventory, STARTING_LIVES};
+pub use ride::{
+    LeftRide, MountRide, RideKind, Riding, dragonfly_rider_mask, hops_off, seat_model_matrix,
+};
 pub use tuning::{BallTuning, BugTuning, FormMotion, PlayerTuning};
 
 use crate::assets::terrain::TerrainAsset;
@@ -66,6 +70,8 @@ impl Plugin for PlayerPlugin {
             .add_message::<KillPlayer>()
             .add_message::<HoldPlayer>()
             .add_message::<ReleasePlayer>()
+            .add_message::<MountRide>()
+            .add_message::<LeftRide>()
             .add_message::<TouchedEnemy>()
             .add_message::<BallHitEnemy>()
             .add_message::<EnemyBopped>()
@@ -93,6 +99,7 @@ impl Plugin for PlayerPlugin {
                 FixedUpdate,
                 (
                     health::count_down_invincibility,
+                    ride::seat_riders,
                     bug::move_bug,
                     ball::move_ball,
                     health::count_down_shield,
@@ -132,7 +139,24 @@ impl Plugin for PlayerPlugin {
                     .before(PlayerSystems::Hurt)
                     .run_if(in_state(AppState::InGame)),
             )
-            .add_systems(FixedUpdate, held::apply_holds.in_set(PlayerSystems::Hold))
+            .add_systems(
+                FixedUpdate,
+                (held::apply_holds, ride::mount_rides, ride::leave_rides)
+                    .chain()
+                    .in_set(PlayerSystems::Hold),
+            )
+            // The rides drive themselves just before their riders move, as
+            // the original's riding states call `DriveWaterBug` and
+            // `DriveDragonFly` first.
+            .configure_sets(
+                FixedUpdate,
+                PlayerSystems::Ride
+                    .after(SkeletonSystems::Advance)
+                    .after(CollisionSystems::Gather)
+                    .after(PlayerSystems::Kick)
+                    .before(PlayerSystems::Move)
+                    .run_if(in_state(AppState::InGame)),
+            )
             // The original's objects hurt the player while they move, after
             // the player's own move; applying their hurts together once all
             // have moved keeps them within the same tick.
@@ -167,6 +191,9 @@ pub enum PlayerSystems {
     /// The bug's kick, before it moves: aiming, and telling the kicked
     /// objects.
     Kick,
+    /// The rides ([`Riding`]) drive themselves, reading their riders'
+    /// controls, just before the players move.
+    Ride,
     /// Moves the player each fixed tick.
     Move,
     /// Applies the holds and releases enemies sent this tick
@@ -451,7 +478,8 @@ fn respawn_dead_players(
 /// Places the player's model: the bug stands on the player's origin; the
 /// ball's frozen roll-up pose sits below its centre and rolls about it. An
 /// eaten bug's model is in its eater's mouth instead
-/// ([`held::follow_eaters`]).
+/// ([`held::follow_eaters`]), and a riding bug's on its ride
+/// ([`ride::seat_riders`]).
 ///
 /// Port of the ball's transform in `UpdatePlayer_Ball`
 /// (original/src/Player/Player_Ball.c), whose mesh `InitPlayer_Ball` moves
@@ -461,7 +489,11 @@ fn pose_player_model(
     mut models: Query<&mut Transform, Without<PlayerForm>>,
 ) {
     for (form, state, spin, model) in &players {
-        if *form == PlayerForm::Bug && *state == BugState::BeingEaten {
+        // Held in a mouth or seated on a ride, the model has been placed
+        // already.
+        if *form == PlayerForm::Bug
+            && (*state == BugState::BeingEaten || RideKind::of_state(*state).is_some())
+        {
             continue;
         }
         let Ok(mut transform) = models.get_mut(model.0) else {

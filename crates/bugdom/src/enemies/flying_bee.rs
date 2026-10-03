@@ -13,8 +13,8 @@
 //! `TouchedEnemy { spiked: true }`, which kills the bee.
 //!
 //! The player riding the dragonfly (`gCurrentDragonFly`) changes how bees
-//! keep their distance and dive. The ride isn't ported yet, so
-//! [`riding_dragonfly`] is always false.
+//! keep their distance and dive. The original's flag is global; here each
+//! bee looks at whether the player it goes for rides the dragonfly.
 
 use avian3d::prelude::{CollisionLayers, LayerMask};
 use bevy::prelude::*;
@@ -33,7 +33,7 @@ use crate::items::pickups::DetonatorsBlown;
 use crate::items::{ItemSpawn, RegisterItemKind, forget_terrain_item, kind};
 use crate::level::{CurrentLevel, LevelType};
 use crate::math::{GameRandom, quick_distance, turn_toward, yaw_of};
-use crate::player::{Player, PlayerForm};
+use crate::player::{Player, PlayerForm, RideKind, Riding};
 use crate::skeleton::{SkeletonAnimator, SkeletonType};
 use crate::terrain::{LayerKind, TerrainMap};
 
@@ -222,12 +222,6 @@ impl FlyingBeeBrain {
             dist_from_player: random.next_f32() * DIST_FROM_PLAYER_RANGE + DIST_FROM_PLAYER_MIN,
         }
     }
-}
-
-/// Whether the player is riding the dragonfly (`gCurrentDragonFly`).
-/// The ride isn't ported yet.
-fn riding_dragonfly() -> bool {
-    false
 }
 
 /// A bee's skeleton at `position`, as both makers set it up.
@@ -608,6 +602,7 @@ type PlayerQuery<'w, 's> = Query<
         &'static Transform,
         &'static CollisionBoxes,
         &'static PlayerForm,
+        Option<&'static Riding>,
     ),
     (With<Player>, Without<FlyingBeeBrain>),
 >;
@@ -615,15 +610,15 @@ type PlayerQuery<'w, 's> = Query<
 /// The player nearest to `coord`, as a bee sees it.
 fn bee_target(coord: Vec3, players: &PlayerQuery) -> Option<BeeTarget> {
     let nearest = nearest_player(coord, players.iter().map(|(t, ..)| t.translation))?;
-    players
-        .iter()
-        .find(|(t, ..)| t.translation == nearest)
-        .map(|(transform, boxes, form)| BeeTarget {
+    players.iter().find(|(t, ..)| t.translation == nearest).map(
+        |(transform, boxes, form, riding)| BeeTarget {
             position: transform.translation,
             bottom: boxes.0.first().map_or(0.0, |b| b.bottom),
             ball: *form == PlayerForm::Ball,
-            dragonfly: riding_dragonfly(),
-        })
+            // `gCurrentDragonFly`.
+            dragonfly: riding.is_some_and(|r| r.kind == RideKind::DragonFly),
+        },
+    )
 }
 
 /// Moves the bees by their state. Leaving the item window

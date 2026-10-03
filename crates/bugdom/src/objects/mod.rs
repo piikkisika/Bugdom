@@ -17,7 +17,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
 use bevy::shader::ShaderRef;
 
-pub use shadow::{Shadow, ShadowOf, Shadows, attach_shadow};
+pub use shadow::{HideShadow, Shadow, ShadowOf, Shadows, attach_shadow};
 
 use crate::assets::model::Model;
 use crate::level::{AMBIENT_BRIGHTNESS, CurrentLevel, FILL_BRIGHTNESS};

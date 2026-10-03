@@ -246,7 +246,7 @@ pub fn eaten_model_matrix(joint: Affine3A, eater_scale: f32, mouth_offset: Vec3)
 /// Splits an eaten bug's model matrix between the player's root, which
 /// moves to the model's origin and keeps its heading, and the model's
 /// local transform under it.
-fn split_eaten_matrix(model: Affine3A, root_rotation: Quat) -> (Vec3, Transform) {
+pub(super) fn split_eaten_matrix(model: Affine3A, root_rotation: Quat) -> (Vec3, Transform) {
     let origin = Vec3::from(model.translation);
     (origin, model_relative_to(model, root_rotation, origin))
 }
@@ -255,6 +255,31 @@ fn split_eaten_matrix(model: Affine3A, root_rotation: Quat) -> (Vec3, Transform)
 fn model_relative_to(model: Affine3A, root_rotation: Quat, root_translation: Vec3) -> Transform {
     let root = Affine3A::from_rotation_translation(root_rotation, root_translation);
     Transform::from_matrix(Mat4::from(root.inverse() * model))
+}
+
+/// The world matrix of an object's `joint` (`FindJointFullMatrix`) and
+/// the object's scale. An enemy's skeleton and scale are on its model
+/// child ([`EnemyModel`]), under a root with a unit scale; other objects
+/// carry them on their own entity.
+pub(super) fn joint_matrix(
+    rigs: &Query<(&Transform, Option<&SkeletonRig>), Without<Player>>,
+    object: Entity,
+    model: Option<&EnemyModel>,
+    joint: usize,
+) -> Option<(Affine3A, f32)> {
+    let (root, root_rig) = rigs.get(object).ok()?;
+    let (base, scale, rig) = match model {
+        Some(model) => {
+            let (model_transform, rig) = rigs.get(model.0).ok()?;
+            (
+                root.compute_affine() * model_transform.compute_affine(),
+                model_transform.scale.x,
+                rig,
+            )
+        }
+        None => (root.compute_affine(), root.scale.x, root_rig),
+    };
+    Some((rig?.joint_transform(joint, base)?, scale))
 }
 
 /// Keeps each eaten bug in its eater's mouth, and kills it if the eater is
@@ -283,31 +308,12 @@ pub(super) fn follow_eaters(
             });
             continue;
         };
-        let matrix = {
-            let rigs = transforms.p0();
-            let Ok((eater, eater_rig)) = rigs.get(eaten.enemy) else {
-                continue;
-            };
-            // An enemy's skeleton and scale are on its model child; its
-            // root has a unit scale.
-            let (base, scale, rig) = match eater_model {
-                Some(model) => {
-                    let Ok((model_transform, rig)) = rigs.get(model.0) else {
-                        continue;
-                    };
-                    (
-                        eater.compute_affine() * model_transform.compute_affine(),
-                        model_transform.scale.x,
-                        rig,
-                    )
-                }
-                None => (eater.compute_affine(), eater.scale.x, eater_rig),
-            };
-            let Some(joint) = rig.and_then(|rig| rig.joint_transform(eaten.joint, base)) else {
-                continue;
-            };
-            eaten_model_matrix(joint, scale, eaten.mouth_offset)
+        let Some((joint, scale)) =
+            joint_matrix(&transforms.p0(), eaten.enemy, eater_model, eaten.joint)
+        else {
+            continue;
         };
+        let matrix = eaten_model_matrix(joint, scale, eaten.mouth_offset);
         let local = if eaten.follow {
             let (origin, local) = split_eaten_matrix(matrix, transform.rotation);
             transform.translation = origin;

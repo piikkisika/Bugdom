@@ -18,6 +18,7 @@ use super::health::{DeferredKnock, Torched, kill_player};
 use super::held::{CARRIED_DROP, CarriedBy, EatenBy, player_layers};
 use super::kick::{KICK_NOW_FLAG, KickLanded, Kickables, PELVIS_JOINT, kick_impact};
 use super::movement::{Motion, MotionContext, PlayerData, PlayerMessages};
+use super::ride::{dragonfly_rider_mask, hops_off};
 use super::{BugTuning, Dying, Player, PlayerForm, PlayerModel, PlayerTuning};
 use crate::input::Action;
 use crate::liquids::LiquidKind;
@@ -60,6 +61,11 @@ pub enum BugState {
     Webbed,
     /// Hanging under a firefly ([`CarriedBy`]), until it lets go.
     Carried,
+    /// Riding the water bug ([`Riding`](super::ride::Riding)), until it hops off.
+    RideWaterBug,
+    /// Riding the dragonfly ([`Riding`](super::ride::Riding)), until it hops off or an enemy
+    /// throws it off.
+    RideDragonFly,
 }
 
 /// One tick of the bug's movement.
@@ -283,9 +289,20 @@ impl Bug<'_> {
             BugState::BloodSuck => self.blood_suck(),
             BugState::Webbed => self.webbed(),
             BugState::Carried => self.carried(),
+            BugState::RideWaterBug => self.ride_water_bug(),
+            BugState::RideDragonFly => self.ride_dragonfly(),
         }
-        // A held bug doesn't turn (`UpdatePlayer_Bug` isn't called).
-        if !self.rolled_up && !matches!(self.state, BugState::BeingEaten | BugState::Carried) {
+        // A held or riding bug doesn't turn (`UpdatePlayer_Bug` isn't
+        // called).
+        if !self.rolled_up
+            && !matches!(
+                self.state,
+                BugState::BeingEaten
+                    | BugState::Carried
+                    | BugState::RideWaterBug
+                    | BugState::RideDragonFly
+            )
+        {
             self.update();
         }
     }
@@ -503,6 +520,44 @@ impl Bug<'_> {
                 self.fall();
             }
         }
+    }
+
+    /// Port of `MovePlayerBug_RideWaterBug`: the water bug drives itself
+    /// and has seated the bug ([`seat_riders`](super::ride::seat_riders)),
+    /// so all that is left is hopping off, which keeps the bug's own
+    /// velocity: the original never updates it while riding.
+    fn ride_water_bug(&mut self) {
+        if hops_off(self.motion.input) {
+            self.hop_off();
+        }
+    }
+
+    /// Port of `MovePlayerBug_RideDragonFly`: the bug moves with the
+    /// dragonfly, which has seated it, and only collides with enemies; any
+    /// hit throws it off, as does the jump button.
+    fn ride_dragonfly(&mut self) {
+        if !hops_off(self.motion.input) {
+            let m = &mut self.motion;
+            m.velocity = (m.coord - m.old_coord) / m.dt;
+            if m.collide_with(dragonfly_rider_mask(), m.dt) == 0 {
+                return;
+            }
+        }
+        self.motion.velocity.x = 0.0;
+        self.motion.velocity.z = 0.0;
+        self.hop_off();
+    }
+
+    /// Jumps off the ride (the `kKey_Jump` case of the riding states).
+    /// A killed bug only falls off, without the jump's animation.
+    fn hop_off(&mut self) {
+        self.motion.velocity.y = self.motion.tuning.bug.jump_speed;
+        self.state = if self.motion.killed {
+            BugState::Death
+        } else {
+            BugState::Jump
+        };
+        self.jump();
     }
 
     /// Sinks slowly; the bug starts again once the kill delay is over.
@@ -1185,5 +1240,81 @@ mod tests {
         bug.tick();
         assert_eq!(bug.state, BugState::BeingEaten);
         assert_eq!((bug.motion.coord, bug.motion.yaw), (coord, yaw));
+    }
+
+    #[test]
+    fn a_rider_sits_still_until_it_jumps_off_the_water_bug() {
+        let bench = Bench::lawn();
+        let idle = ControlInput::for_tests(&[Action::Forward], &[]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &idle, &animator, BugState::RideWaterBug);
+        bug.motion.coord.y += 500.0;
+        bug.motion.velocity = Vec3::new(120.0, 0.0, -40.0);
+        let seat = bug.motion.coord;
+        bug.tick();
+        // The water bug placed it and drives; the bug itself doesn't move.
+        assert_eq!(bug.state, BugState::RideWaterBug);
+        assert_eq!(bug.motion.coord, seat);
+        assert_eq!(bug.motion.steering, Vec2::ZERO);
+
+        // The jump keeps the bug's own (stale) velocity across the ground.
+        let jump = ControlInput::for_tests(&[], &[Action::Jump]);
+        bug.motion = bug.motion.next_tick(&jump);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Jump);
+        assert!(bug.motion.velocity.y > 0.0);
+        assert_ne!(bug.motion.velocity.x, 0.0);
+    }
+
+    #[test]
+    fn hopping_off_the_dragonfly_stops_the_bug_across_the_ground() {
+        let bench = Bench::lawn();
+        let jump = ControlInput::for_tests(&[], &[Action::Jump]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &jump, &animator, BugState::RideDragonFly);
+        bug.motion.coord.y += 800.0;
+        bug.motion.velocity = Vec3::new(900.0, 0.0, 300.0);
+        bug.tick();
+        assert_eq!(bug.state, BugState::Jump);
+        assert_eq!(bug.motion.velocity.xz(), Vec2::ZERO);
+        assert!(bug.motion.velocity.y > 0.0);
+    }
+
+    #[test]
+    fn the_dragonfly_rider_moves_with_its_seat_and_an_enemy_throws_it_off() {
+        let bench = Bench::lawn();
+        let idle = ControlInput::for_tests(&[], &[]);
+        let animator = SkeletonAnimator::default();
+        let mut bug = held_bug(&bench, &idle, &animator, BugState::RideDragonFly);
+        // Seated 30 units on from last tick, high in the air.
+        bug.motion.coord.y += 800.0;
+        bug.motion.old_coord = bug.motion.coord - Vec3::X * 30.0;
+        bug.tick();
+        assert_eq!(bug.state, BugState::RideDragonFly);
+        let expected = 30.0 / bug.motion.dt;
+        assert!((bug.motion.velocity.x - expected).abs() < 1e-2);
+
+        // An enemy where the bug is about to sit.
+        let at = bug.motion.coord;
+        let enemy_box =
+            crate::collision::CollisionBox::new(10_000.0, -10_000.0, -100.0, 100.0, 100.0, -100.0)
+                .at(at);
+        let enemy = [BoxTarget {
+            entity: Entity::from_raw_u32(7).unwrap(),
+            kinds: CollisionKind::Enemy.into(),
+            solid: SolidSides::ALL,
+            boxes: vec![enemy_box],
+            old_boxes: vec![enemy_box],
+            velocity: Vec3::ZERO,
+            trigger: None,
+        }];
+        let mut bug = held_bug(&bench, &idle, &animator, BugState::RideDragonFly);
+        bug.motion = bench.motion(PlayerForm::Bug, &idle, &enemy);
+        // The dragonfly carries it into the enemy from the side.
+        bug.motion.coord = at;
+        bug.motion.old_coord = at - Vec3::X * 300.0;
+        bug.tick();
+        assert_eq!(bug.state, BugState::Jump);
+        assert_eq!(bug.motion.velocity.xz(), Vec2::ZERO);
     }
 }

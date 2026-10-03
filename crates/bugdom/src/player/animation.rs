@@ -24,6 +24,8 @@ mod anim {
     pub const LAND: usize = 7;
     pub const SWIM: usize = 8;
     pub const FALL_ON_BUTT: usize = 9;
+    pub const RIDE_WATER_BUG: usize = 10;
+    pub const RIDE_DRAGONFLY: usize = 11;
     pub const BEING_EATEN: usize = 12;
     pub const DEATH: usize = 13;
     pub const BLOOD_SUCK: usize = 14;
@@ -75,6 +77,8 @@ fn animation_for(state: BugState) -> usize {
         BugState::BloodSuck => anim::BLOOD_SUCK,
         BugState::Webbed => anim::WEBBED,
         BugState::Carried => anim::CARRIED,
+        BugState::RideWaterBug => anim::RIDE_WATER_BUG,
+        BugState::RideDragonFly => anim::RIDE_DRAGONFLY,
     }
 }
 
@@ -96,6 +100,9 @@ fn morph_rate(from: Option<BugState>, to: BugState) -> Option<f32> {
         // the carried bug's drop (`MovePlayerBug_Carried`).
         (_, BugState::BeingEaten | BugState::BloodSuck | BugState::Carried) => Some(7.0),
         (_, BugState::Webbed) => Some(5.0),
+        // `DoTrig_WaterBug` and `DoTrig_DragonFly`.
+        (_, BugState::RideWaterBug) => Some(7.0),
+        (_, BugState::RideDragonFly) => Some(8.0),
         (Some(BugState::BloodSuck), BugState::Stand) => Some(7.0),
         (Some(BugState::Webbed), BugState::Stand) => Some(3.0),
         (Some(BugState::Carried), BugState::Fall) => Some(5.0),

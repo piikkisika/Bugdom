@@ -57,6 +57,11 @@ pub struct ShadowOf(pub Entity);
 #[relationship_target(relationship = ShadowOf, linked_spawn)]
 pub struct Shadows(Vec<Entity>);
 
+/// Hides an owner's shadows while it is on the owner, as the riding bug
+/// hides its own (`STATUS_BIT_HIDDEN` on its `ShadowNode`).
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HideShadow;
+
 /// Gives `owner` a shadow of the given size (`AttachShadowToObject`).
 pub fn attach_shadow(
     commands: &mut Commands,
@@ -96,6 +101,7 @@ fn update_shadows(
             Option<&CollisionBoxes>,
             Has<Underwater>,
             Option<&Visibility>,
+            Has<HideShadow>,
         ),
         Without<Shadow>,
     >,
@@ -103,12 +109,13 @@ fn update_shadows(
     mut shadows: Query<(&Shadow, &ShadowOf, &mut Transform, &mut Visibility)>,
 ) {
     for (shadow, owner, mut transform, mut visibility) in &mut shadows {
-        let Ok((owner_transform, boxes, underwater, owner_visibility)) = owners.get(owner.0) else {
+        let Ok((owner_transform, boxes, underwater, owner_visibility, hide)) = owners.get(owner.0)
+        else {
             continue;
         };
         // No shadow in a liquid, nor for a hidden owner (such as a spline
         // object out of range, whose `ShadowNode` the original detaches).
-        if underwater || owner_visibility == Some(&Visibility::Hidden) {
+        if underwater || hide || owner_visibility == Some(&Visibility::Hidden) {
             visibility.set_if_neq(Visibility::Hidden);
             continue;
         }
