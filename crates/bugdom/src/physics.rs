@@ -67,6 +67,12 @@ fn remember_previous_positions(mut query: Query<(&Transform, &mut PreviousPositi
 #[derive(Component, Debug, Clone, Copy, Default, PartialEq, Deref, DerefMut)]
 pub struct Velocity(pub Vec3);
 
+/// The moving platform this entity stands on (`MPlatform`), as its last
+/// move left it. The platform's [`Velocity`] is added to the entity's own
+/// while it moves.
+#[derive(Component, Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RidingPlatform(pub Entity);
+
 /// How an entity touches the terrain, as its last move left it.
 #[derive(Component, Debug, Clone, Copy, PartialEq)]
 pub struct GroundContact {

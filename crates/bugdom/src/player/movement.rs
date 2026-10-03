@@ -33,7 +33,7 @@ use crate::fences::Fences;
 use crate::input::{Action, ControlInput, ControlSettings};
 use crate::liquids::{Liquid, LiquidKind, Underwater};
 use crate::math::{yaw_forward, yaw_from_point_to_point, yaw_of};
-use crate::physics::{GroundContact, PreviousPosition, Velocity};
+use crate::physics::{GroundContact, PreviousPosition, RidingPlatform, Velocity};
 use crate::terrain::TerrainMap;
 
 /// Falling into water faster than this, in units per second, splashes.
@@ -88,6 +88,7 @@ pub(super) struct PlayerData {
     pub steering: &'static mut PlayerSteering,
     pub ground: &'static mut GroundContact,
     pub underwater: Option<&'static Underwater>,
+    pub platform: Option<&'static RidingPlatform>,
     pub dying: Has<Dying>,
     pub health: &'static mut Health,
     pub invincible: &'static mut InvincibleTimer,
@@ -127,6 +128,9 @@ pub(super) struct Motion<'a> {
     /// In a liquid's volume, as of the last collision check
     /// (`STATUS_BIT_UNDERWATER`).
     pub underwater: Option<Underwater>,
+    /// The moving platform under the player and its velocity, as of the
+    /// last collision check (`MPlatform`).
+    pub platform: Option<(Entity, Vec3)>,
     /// Killed, and waiting to start again (`gPlayerGotKilledFlag`).
     pub killed: bool,
     /// Triggers that went off and stopped being solid this tick.
@@ -201,6 +205,15 @@ impl MotionContext<'_, '_> {
                 .map(|t| self.damages.get(t.entity).map_or(0.0, |d| d.0))
                 .collect(),
             underwater: player.underwater.copied(),
+            // The platform moved since the last tick; its velocity is as
+            // the candidates gathered it this tick.
+            platform: player.platform.and_then(|p| {
+                candidates
+                    .0
+                    .iter()
+                    .find(|t| t.entity == p.0)
+                    .map(|t| (p.0, t.velocity))
+            }),
             killed: player.dying,
             spent: EntityHashSet::default(),
             triggered: Vec::new(),
@@ -247,6 +260,14 @@ impl Motion<'_> {
             match self.underwater {
                 Some(underwater) => entity.insert(underwater),
                 None => entity.remove::<Underwater>(),
+            };
+        }
+        let platform = self.platform.map(|(entity, _)| RidingPlatform(entity));
+        if player.platform.copied() != platform {
+            let mut entity = commands.entity(player.entity);
+            match platform {
+                Some(platform) => entity.insert(platform),
+                None => entity.remove::<RidingPlatform>(),
             };
         }
         player.transform.translation = self.coord;
@@ -298,8 +319,8 @@ impl Motion<'_> {
     /// Port of `DoPlayerMovementAndCollision`
     /// (original/src/Player/Player_Control.c). In a liquid the player floats
     /// just under the top of its volume, and the ball turns back into the
-    /// bug to swim; falling fast into water splashes. Moving platforms and
-    /// viscous traps arrive with those features.
+    /// bug to swim; falling fast into water splashes. A moving platform
+    /// underfoot carries the player. Viscous traps arrive with that feature.
     pub fn move_and_collide(&mut self, no_control: bool) {
         let tuning = self.tuning;
         let form = tuning.form(self.form);
@@ -322,7 +343,9 @@ impl Motion<'_> {
         let dt = self.dt / passes as f32;
         for _ in 0..passes {
             let old_coord = self.coord;
-            self.coord += self.velocity * dt;
+            // A moving platform carries the player.
+            let platform_velocity = self.platform.map_or(Vec3::ZERO, |(_, v)| v);
+            self.coord += (self.velocity + platform_velocity) * dt;
             self.collide_with_objects(dt);
 
             if !self.killed
@@ -455,7 +478,7 @@ impl Motion<'_> {
     /// touched or bopped. A killed player only bumps into solid things.
     ///
     /// Port of `DoPlayerCollisionDetect` (original/src/Player/MyGuy.c).
-    /// Platforms and viscous objects arrive with those features.
+    /// Viscous objects arrive with that feature.
     fn collide_with_objects(&mut self, dt: f32) {
         let mask = if self.killed {
             CollisionKind::Misc.into()
@@ -474,7 +497,7 @@ impl Motion<'_> {
             is_player: true,
             shape: self.form.collision_box(),
             old_coord: self.old_coord,
-            platform_velocity: Vec3::ZERO,
+            platform_velocity: self.platform.map_or(Vec3::ZERO, |(_, v)| v),
         };
         let result = resolve_box_collisions(
             &mover,
@@ -490,6 +513,8 @@ impl Motion<'_> {
         }
 
         self.underwater = None;
+        // Not on a platform unless one is underfoot in this check.
+        self.platform = None;
         let candidates = self.candidates;
         for hit in &result.hits {
             let target = &candidates[hit.target];
@@ -504,6 +529,13 @@ impl Motion<'_> {
             {
                 self.coord.x = self.old_coord.x;
                 self.coord.z = self.old_coord.z;
+            }
+
+            // Only landing on it puts the player on a moving platform.
+            if target.kinds.has_all(CollisionKind::MovingPlatform)
+                && hit.sides.contains(SolidSides::BOTTOM)
+            {
+                self.platform = Some((target.entity, target.velocity));
             }
 
             let damage = self
@@ -697,6 +729,7 @@ pub(super) mod bench {
                 candidate_liquids: vec![None; candidates.len()],
                 candidate_damage: vec![0.0; candidates.len()],
                 underwater: None,
+                platform: None,
                 killed: false,
                 spent: EntityHashSet::default(),
                 triggered: Vec::new(),
@@ -816,6 +849,55 @@ mod tests {
         motion.candidate_damage = vec![damage; targets.len()];
         motion.move_and_collide(false);
         motion
+    }
+
+    #[test]
+    fn landing_on_a_moving_platform_carries_the_player_with_it() {
+        let bench = Bench::lawn();
+        let input = ControlInput::default();
+        // A platform whose top is just above the player's feet, moving +x.
+        let mut platform = target(
+            &bench,
+            &[CollisionKind::Misc, CollisionKind::MovingPlatform],
+            SolidSides::ALL,
+            -300.0,
+            10.0,
+        );
+        let platform_velocity = Vec3::new(120.0, 0.0, 0.0);
+        platform.velocity = platform_velocity;
+        let platforms = [platform];
+
+        // It falls onto the platform from just above it.
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &platforms);
+        motion.coord.y += 30.0;
+        motion.old_coord = motion.coord;
+        motion.velocity = Vec3::new(0.0, -2000.0, 0.0);
+        motion.move_and_collide(true);
+        assert_eq!(motion.platform, Some((target_entity(), platform_velocity)));
+
+        // The next move goes along with the platform.
+        // Gravity keeps it pressed onto the platform, as in the game.
+        let mut motion = motion.next_tick(&input);
+        motion.velocity = Vec3::new(0.0, -bench.tuning.gravity * DT, 0.0);
+        let before = motion.coord;
+        motion.move_and_collide(true);
+        assert!((motion.coord.x - before.x - platform_velocity.x * DT).abs() < 1e-3);
+        assert!(motion.platform.is_some());
+
+        // Without a moving platform underfoot, nothing carries it.
+        let still = [target(
+            &bench,
+            &[CollisionKind::Misc],
+            SolidSides::ALL,
+            -300.0,
+            10.0,
+        )];
+        let mut motion = bench.motion(PlayerForm::Bug, &input, &still);
+        motion.coord.y += 30.0;
+        motion.old_coord = motion.coord;
+        motion.velocity = Vec3::new(0.0, -2000.0, 0.0);
+        motion.move_and_collide(true);
+        assert_eq!(motion.platform, None);
     }
 
     #[test]
