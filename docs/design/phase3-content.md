@@ -304,5 +304,20 @@ Pending the owner's approval (merged; easy to revert):
     player's collision rather than after it, so a standing player is hit;
     its nearness test therefore sees player positions one tick old.
 
+17. **Full particle groups** (Ant Hill items): where the original starts a
+    new group and redoes a burst for as long as groups fill up (forever,
+    for a burst bigger than a group), the port redoes it once.
+18. **Root swing grabs**: a bug can grab by its state (jumping or
+    falling) rather than its animation number, and every player is
+    checked, not one.
+19. **Valve numbers above 7** count as shut, since `WaterValves` holds 8.
+    The data uses 0, 2, 4, 5 and 99, and 99 never opens in the original
+    either.
+20. **Root swing's unused joint object**: the invisible object the
+    original puts on the root's second-to-last joint has no model or
+    collision, so it is not ported.
+21. **Ant Hill items on the wrong level** log a warning and are skipped,
+    where the original stops the game.
+
 Any others that come up during the ports are listed here for approval
 before they merge.
