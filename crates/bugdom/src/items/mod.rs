@@ -150,8 +150,10 @@ impl RegisterItemKind for App {
         system: impl IntoSystem<In<ItemSpawn>, bool, M> + 'static,
     ) -> &mut Self {
         let id = self.world_mut().register_system(system);
+        // Created on first use, so that plugins can register kinds whatever
+        // order they are built in.
         self.world_mut()
-            .resource_mut::<ItemKinds>()
+            .get_resource_or_init::<ItemKinds>()
             .0
             .insert(kind, id);
         self
