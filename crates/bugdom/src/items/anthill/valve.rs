@@ -212,6 +212,6 @@ mod tests {
         );
         // Turned a quarter, only once.
         let turned = world.get::<Transform>(handle).unwrap().rotation;
-        assert!(turned.angle_between(Quat::from_rotation_y(HANDLE_TURN)) < 1e-4);
+        assert!(turned.abs_diff_eq(Quat::from_rotation_y(HANDLE_TURN), 1e-5));
     }
 }
