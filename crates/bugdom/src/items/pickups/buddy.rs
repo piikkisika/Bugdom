@@ -501,3 +501,88 @@ fn splatter(
     }
     // Sound: EFFECT_FIRECRACKER at the buddy.
 }
+
+#[cfg(test)]
+mod tests {
+    use bevy::ecs::system::RunSystemOnce;
+
+    use super::*;
+
+    #[test]
+    fn a_following_buddy_closes_on_its_spot_beside_the_player() {
+        let me = Vec3::new(1000.0, 50.0, 1000.0);
+        // Far off to the east: it heads for the spot 120 units east of the
+        // player, at most 500 units of the gap counting.
+        let coord = Vec3::new(2000.0, 400.0, 1000.0);
+        let dt = 1.0 / 60.0;
+        let (next, target) = follow_target(coord, me, dt);
+        assert_eq!(target.xz(), Vec2::new(1000.0 + BUDDY_DIST_FROM_ME, 1000.0));
+        let step = BUDDY_MAX_GAP * BUDDY_ACCEL * dt;
+        assert!((next.x - (2000.0 - step)).abs() < 1e-3);
+        assert_eq!(next.y, 1000.0);
+        let away = next.x - me.x - BUDDY_CLOSEST;
+        let height = me.y + away * BUDDY_HEIGHT_FACTOR + BUDDY_MINY;
+        assert!((target.y - height).abs() < 1e-3);
+
+        // Close by, it hovers at its lowest height.
+        let (_, target) = follow_target(Vec3::new(1030.0, 0.0, 1000.0), me, dt);
+        assert!((target.y - (me.y + BUDDY_MINY)).abs() < 1e-3);
+    }
+
+    #[test]
+    fn an_attacking_buddy_climbs_to_its_enemy_and_steadies() {
+        let dt = 0.5;
+        let span = Some((100.0, 200.0));
+        assert_eq!(climb_toward(0.0, 50.0, span, dt), 200.0);
+        assert_eq!(climb_toward(0.0, 250.0, span, dt), -200.0);
+        assert_eq!(climb_toward(300.0, 150.0, None, dt), 300.0);
+        // Halved once per original frame.
+        let steadied = climb_toward(300.0, 150.0, span, 1.0 / ORIGINAL_FRAME_RATE);
+        assert!((steadied - 150.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_buddy_is_sent_only_by_a_free_player() {
+        assert!(player_can_move(PlayerForm::Bug, BugState::Walk));
+        assert!(player_can_move(PlayerForm::Bug, BugState::Swim));
+        assert!(!player_can_move(PlayerForm::Bug, BugState::Kick));
+        assert!(!player_can_move(PlayerForm::Bug, BugState::Death));
+        assert!(!player_can_move(PlayerForm::Bug, BugState::Webbed));
+        assert!(player_can_move(PlayerForm::Ball, BugState::RollUp));
+    }
+
+    #[test]
+    fn a_restarted_player_loses_only_the_buddy_that_follows_it() {
+        let mut world = World::new();
+        world.init_resource::<Messages<PlayerRespawned>>();
+        let player = world.spawn_empty().id();
+        let other = world.spawn_empty().id();
+        let buddy = |state| Buddy { player, state };
+        let follower = world.spawn(buddy(BuddyState::Follow)).id();
+        let attacker = world.spawn(buddy(BuddyState::Attack)).id();
+        let others = world
+            .spawn(Buddy {
+                player: other,
+                state: BuddyState::Follow,
+            })
+            .id();
+        assert!(
+            world
+                .get::<Buddy>(follower)
+                .is_some_and(|b| b.follows(player))
+        );
+        assert!(
+            !world
+                .get::<Buddy>(attacker)
+                .is_some_and(|b| b.follows(player))
+        );
+
+        world.write_message(PlayerRespawned(player));
+        world
+            .run_system_once(dismiss_buddies)
+            .expect("the system runs");
+        assert!(world.get_entity(follower).is_err());
+        assert!(world.get_entity(attacker).is_ok());
+        assert!(world.get_entity(others).is_ok());
+    }
+}
