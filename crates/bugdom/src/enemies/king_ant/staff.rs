@@ -318,7 +318,11 @@ pub(super) fn shoot_staff(commands: &mut Commands, held: &KingStaff, player: Vec
         Visibility::default(),
         PreviousPosition(at),
         Velocity(aim(held.origin, player)),
-        solid_object(vec![BULLET_BOX], CollisionKind::HurtMe, SolidSides::TOUCHABLE),
+        solid_object(
+            vec![BULLET_BOX],
+            CollisionKind::HurtMe,
+            SolidSides::TOUCHABLE,
+        ),
         Damage(BULLET_DAMAGE),
         DespawnOnExit(AppState::InGame),
     ));
@@ -513,7 +517,9 @@ mod tests {
         assert_eq!(held.flame_group, None, "not due yet");
         burn_staff(&mut held, &dry, &mut groups, &mut random, 0.015);
         let first = held.flame_group;
-        let count = first.and_then(|g| groups.get(g)).map(|g| g.particles().len());
+        let count = first
+            .and_then(|g| groups.get(g))
+            .map(|g| g.particles().len());
         assert_eq!(count, Some(1));
 
         let wet = KingAntBrain {

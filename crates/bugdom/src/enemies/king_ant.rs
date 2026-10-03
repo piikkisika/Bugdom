@@ -17,7 +17,6 @@
 mod staff;
 
 use avian3d::prelude::{CollisionLayers, LayerMask};
-use bevy::math::Affine3A;
 use bevy::prelude::*;
 
 use super::{
@@ -43,7 +42,7 @@ use crate::player::Player;
 use crate::skeleton::{Skeleton, SkeletonAnimator, SkeletonRig, SkeletonType, joint_position};
 use crate::state::AppState;
 
-use staff::{KingStaff, StaffBullet};
+use staff::{KingStaff, Staff};
 
 pub struct KingAntPlugin;
 
@@ -227,7 +226,12 @@ pub struct KingAntBrain {
 impl KingAntBrain {
     /// Switches to `state`, blending into its animation at `rate` per
     /// second (`MorphToSkeletonAnim`).
-    fn morph_state(&mut self, animator: Option<&mut SkeletonAnimator>, state: KingAntState, rate: f32) {
+    fn morph_state(
+        &mut self,
+        animator: Option<&mut SkeletonAnimator>,
+        state: KingAntState,
+        rate: f32,
+    ) {
         self.state = state;
         if let Some(animator) = animator {
             animator.morph_to(state.anim(), rate);
@@ -338,7 +342,11 @@ fn knock_king_ant_on_butt(
     if brain.state == KingAntState::OnButt {
         return false;
     }
-    brain.morph_state(animator.as_deref_mut(), KingAntState::OnButt, BUTT_MORPH_RATE);
+    brain.morph_state(
+        animator.as_deref_mut(),
+        KingAntState::OnButt,
+        BUTT_MORPH_RATE,
+    );
     brain.butt_timer = BUTT_TIME;
     **velocity = Vec3::new(knock.x, KNOCK_RISE, knock.y);
     if health.lose(damage) {
@@ -489,7 +497,11 @@ fn turn_toward_target(transform: &mut Transform, target: Vec2, dt: f32) {
 /// Falls under gravity, slowed by the friction if `slow`, and moves.
 fn fall(body: &mut EnemyBodyItem, slow: bool, dt: f32) {
     if slow {
-        apply_friction(&mut body.velocity, per_frame_friction(FRICTION_PER_FRAME), dt);
+        apply_friction(
+            &mut body.velocity,
+            per_frame_friction(FRICTION_PER_FRAME),
+            dt,
+        );
     }
     body.velocity.y -= ENEMY_GRAVITY * dt;
     let velocity = **body.velocity;
@@ -556,7 +568,12 @@ fn move_king_ants(
             false
         });
         if killed {
+            // The original carries on with the move of the state the king
+            // was in, which can switch the dying king back to waiting or
+            // walking (and have him shoot). Here his move ends, as the
+            // flying bee's and the spider's do: an intentional difference.
             kill_king_ant(&mut commands, king, &mut brain, animator.as_deref_mut());
+            continue;
         }
 
         let at = body.transform.translation;
@@ -564,8 +581,6 @@ fn move_king_ants(
         match state {
             KingAntState::Wait | KingAntState::Walk => {
                 if let Some(next) = next_state(&brain, distance) {
-                    // The state is checked again, as a kill in the
-                    // collision has already switched to the death.
                     let rate = if next == KingAntState::Walk {
                         WALK_MORPH_RATE
                     } else {
@@ -629,29 +644,26 @@ fn update_king_ants(
     time: Res<Time>,
     mut groups: ResMut<ParticleGroups>,
     mut random: ResMut<GameRandom>,
-    mut kings: Query<
-        (
-            &Transform,
-            &CollisionBoxes,
-            &BoundingRadius,
-            &mut KingAntBrain,
-            &mut KingStaff,
-            &EnemyModel,
-        ),
-        Without<StaffBullet>,
-    >,
+    mut kings: Query<(
+        &Transform,
+        &CollisionBoxes,
+        &BoundingRadius,
+        &mut KingAntBrain,
+        &mut KingStaff,
+        &EnemyModel,
+    )>,
     models: ModelQuery,
-    mut staffs: Query<&mut Transform, (Without<KingAntBrain>, Without<SkeletonAnimator>)>,
+    mut staffs: Query<&mut Transform, (With<Staff>, Without<KingAntBrain>)>,
     culling: EnemyCulling,
 ) {
     let dt = time.delta_secs();
     for (transform, boxes, radius, mut brain, mut staff, model) in &mut kings {
-        let base = models
-            .get(model.0)
-            .ok()
-            .and_then(|(model_transform, rig)| {
-                Some((rig?, transform.compute_affine() * model_transform.compute_affine()))
-            });
+        let base = models.get(model.0).ok().and_then(|(model_transform, rig)| {
+            Some((
+                rig?,
+                transform.compute_affine() * model_transform.compute_affine(),
+            ))
+        });
 
         if let Some((rig, base)) = base {
             staff::hold_staff(&mut staff, &mut staffs, rig, base, transform);
@@ -659,7 +671,12 @@ fn update_king_ants(
         staff::burn_staff(&mut staff, &brain, &mut groups, &mut random, dt);
 
         // Water puts the fire out.
-        if particle_hit(&groups, &boxes.0, transform.translation, ParticleFlags::EXTINGUISH) {
+        if particle_hit(
+            &groups,
+            &boxes.0,
+            transform.translation,
+            ParticleFlags::EXTINGUISH,
+        ) {
             if !brain.is_wet() {
                 // Sound: EFFECT_SIZZLE at the king.
             }
@@ -769,12 +786,6 @@ fn light_fiery_parts(
     }
 }
 
-/// The world transform of a model whose root is at `root`, for tests.
-#[cfg(test)]
-fn affine_at(root: Vec3) -> Affine3A {
-    Affine3A::from_translation(root)
-}
-
 #[cfg(test)]
 mod tests {
     use bevy::ecs::system::RunSystemOnce;
@@ -827,7 +838,7 @@ mod tests {
         let mut brain = KingAntBrain::default();
         let mut groups = ParticleGroups::default();
         let mut random = GameRandom::default();
-        let head = affine_at(Vec3::new(0.0, 300.0, 0.0)).transform_point3(Vec3::ZERO);
+        let head = Vec3::new(0.0, 300.0, 0.0);
         burn_hair(&mut brain, &mut groups, &mut random, 0.005, Some(head));
         assert_eq!(brain.head_flame_group, None, "not due yet");
         burn_hair(&mut brain, &mut groups, &mut random, 0.006, Some(head));
